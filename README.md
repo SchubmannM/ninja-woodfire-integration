@@ -185,6 +185,14 @@ mise run test      # the test suite — no Home Assistant needed
 mise run check     # everything the pre-commit hooks check
 ```
 
+`mise run <task>` needs no shell setup. For bare `python` / `pytest` to
+resolve inside the repo, hook mise into your shell so the virtualenv
+activates on `cd`:
+
+```bash
+echo 'eval "$(mise activate zsh)"' >> ~/.zshrc && exec zsh
+```
+
 ## Deploying a change
 
 Home Assistant cannot hot-reload a custom integration. HACS downloads new
@@ -201,8 +209,8 @@ HA_TOKEN=<token>
 EOF
 
 python3 scripts/deploy.py              # tag + release + HACS update + restart
-python3 scripts/deploy.py --restart-only
-python3 scripts/deploy.py --dry-run
+python3 scripts/deploy.py --restart-only   # really does restart HA
+python3 scripts/deploy.py --dry-run        # changes nothing
 ```
 
 It tags the version in `manifest.json`, publishes a GitHub release (which

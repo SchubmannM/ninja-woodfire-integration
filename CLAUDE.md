@@ -34,6 +34,15 @@ mise run compile   # syntax check without importing HA
 mise run deploy    # release + roll out to HA (see below)
 ```
 
+`mise run <task>` carries mise's environment itself, so those work with no
+shell setup. Bare `python` / `pytest` only resolve inside the repo if mise is
+hooked into the shell — otherwise the `[env]` venv activation in `mise.toml`
+never fires and you get `command not found: python`:
+
+```bash
+echo 'eval "$(mise activate zsh)"' >> ~/.zshrc && exec zsh
+```
+
 Without mise, the equivalent is a `.venv` plus `requirements-test.txt` and
 `pre-commit install` — but then nothing pins the interpreter, and it is easy to
 develop on a Python newer than the runtime and ship syntax that fails there.

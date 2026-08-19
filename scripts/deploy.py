@@ -37,11 +37,12 @@ import pathlib
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 
-try:
-    import requests
-except ImportError:
-    sys.exit("this script needs `requests` (pip install requests)")
+# Deliberately stdlib-only. This is the script you reach for when something
+# needs deploying, sometimes from a shell with no virtualenv active — making it
+# depend on `requests` means it fails exactly when it is least convenient.
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "custom_components" / "ninja_woodfire" / "manifest.json"
@@ -80,47 +81,55 @@ class HA:
     def __init__(self, url: str, token: str, dry_run: bool) -> None:
         self.url = url
         self.dry_run = dry_run
-        self.s = requests.Session()
-        self.s.headers.update(
-            {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        self._headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    def _request(self, method: str, path: str, payload=None, timeout: int = 30):
+        data = json.dumps(payload).encode() if payload is not None else None
+        req = urllib.request.Request(
+            f"{self.url}{path}", data=data, headers=self._headers, method=method
         )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode()
+        return json.loads(body) if body.strip() else None
 
     def get(self, path: str, timeout: int = 20):
-        r = self.s.get(f"{self.url}{path}", timeout=timeout)
-        r.raise_for_status()
-        return r.json()
+        return self._request("GET", path, timeout=timeout)
 
     def service(self, domain: str, service: str, **data):
         if self.dry_run:
             print(f"    [dry-run] {domain}.{service} {data or ''}")
             return None
-        r = self.s.post(
-            f"{self.url}/api/services/{domain}/{service}", json=data, timeout=60
+        return self._request(
+            "POST", f"/api/services/{domain}/{service}", payload=data, timeout=60
         )
-        r.raise_for_status()
-        return r.json()
 
     def find_update_entity(self) -> str | None:
         """The HACS update entity for this integration."""
-        for state in self.get("/api/states"):
+        for state in self.get("/api/states") or []:
             eid = state.get("entity_id", "")
             if not eid.startswith("update."):
                 continue
             attrs = state.get("attributes") or {}
-            haystack = f"{eid} {attrs.get('friendly_name', '')} {attrs.get('title', '')}".lower()
+            haystack = (
+                f"{eid} {attrs.get('friendly_name', '')} {attrs.get('title', '')}"
+            ).lower()
             if "ninja" in haystack and "woodfire" in haystack:
                 return eid
         return None
 
     def wait_until_up(self, timeout: int = 240) -> bool:
         deadline = time.time() + timeout
-        # Give it a moment to actually go down first, or we'd see the old process.
+        # Give it a moment to actually go down first, or we would see the old
+        # process still answering and declare success immediately.
         time.sleep(5)
         while time.time() < deadline:
             try:
                 self.get("/api/", timeout=5)
                 return True
-            except Exception:
+            except (urllib.error.URLError, OSError, ValueError):
                 time.sleep(3)
         return False
 
