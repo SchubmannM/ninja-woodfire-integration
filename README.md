@@ -30,6 +30,40 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
   - `ninja_woodfire_cook_halftime`
   - `ninja_woodfire_cook_done`
   - `ninja_woodfire_probe_target_reached`
+- Connectivity diagnostics: `Cloud connected` and `Last cloud report`,
+  so a grill that isn't reporting is visible as such rather than
+  silently rendering as an idle grill (see *Known limitation* below).
+
+## Known limitation — the cloud may never report live state
+
+The grill's Wi-Fi module does not keep a live copy of its state in the
+Ayla cloud. On at least some units it pushes one snapshot when the
+module connects and then goes quiet, streaming live state only to
+clients on the local network or over BLE — which is what the official
+app uses. The Ayla cloud keeps serving that one snapshot indefinitely,
+with no indication of its age.
+
+Measured on an `OG900-EU` during a real Air Fry cook: 467 consecutive
+cloud polls, zero changes. The cloud reported `connection_status:
+Offline` and a `GET_GrillState` of `idle` whose `data_updated_at` was
+**22 hours old**, while the grill was actively preheating and the app
+showed the cook live. Its entire 30-day datapoint history contained
+five state datapoints, all written at module-connect time. The device
+record reads `connection_priority: ["LAN"]`.
+
+Because this integration is a cloud poller, **it cannot see live state
+on a grill in that condition** — no polling interval changes that.
+What it does now is tell you so:
+
+- entities that mirror grill state go **unavailable** instead of
+  presenting a stale snapshot as current,
+- `Cloud connected` reports the grill's cloud session, and
+  `Last cloud report` shows exactly how far behind the cloud copy is,
+- a warning is logged once per transition explaining which of the two
+  failure modes you are in (grill offline, or connected-but-frozen).
+
+If your grill *does* keep its cloud copy fresh, nothing changes for
+you — everything behaves as before.
 
 ## Tested models
 
@@ -103,6 +137,8 @@ support, no warranty, no guarantee of fitness for any purpose**.
   work may never work.
 - The maintainer makes no commitment to keep the project alive,
   compatible with future Home Assistant versions, or working at all.
+- Live state depends entirely on the grill choosing to report to the
+  cloud. See *Known limitation* above — for some units it never does.
 
 If any of that is a problem for you, do not install this.
 
