@@ -1,0 +1,57 @@
+# Local checks, run on every commit. There is no CI: everything here runs in
+# well under a second, so it is cheap to make the commit itself the gate.
+#
+#   brew install pre-commit    (or: pip install pre-commit)
+#   pre-commit install
+#   pre-commit run --all-files
+default_install_hook_types: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-json
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        # Fixture payloads are byte-preserved captures from the grill; the
+        # firmware's own whitespace is the point of them.
+        exclude: ^tests/fixtures/
+      - id: check-added-large-files
+        args: [--maxkb=256]
+      - id: detect-private-key
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: no-secrets
+        name: no device identifiers or tokens
+        entry: python3 scripts/check_no_secrets.py
+        language: system
+        types: [text]
+
+      - id: translations-in-sync
+        name: translation files define the same keys
+        entry: python3 scripts/check_translations.py
+        language: system
+        pass_filenames: false
+        files: ^custom_components/ninja_woodfire/translations/
+
+      - id: compileall
+        name: integration compiles
+        entry: python3 -m compileall -q custom_components/ninja_woodfire
+        language: system
+        pass_filenames: false
+        files: ^custom_components/.*\.py$
+
+      # `language: python` so pre-commit builds and caches its own environment.
+      # The suite needs only pytest and aiohttp — Home Assistant is never
+      # imported, because everything under _lib/ is deliberately free of it —
+      # so this works on a clean checkout with no local venv setup.
+      - id: pytest
+        name: pytest
+        entry: pytest -q
+        language: python
+        additional_dependencies: [pytest>=8.0, aiohttp>=3.9]
+        pass_filenames: false
+        files: ^(custom_components|tests)/
