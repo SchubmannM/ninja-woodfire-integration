@@ -15,6 +15,8 @@ from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
 from ._lib.const import BACKEND_AWS, BACKEND_AYLA, make_region
 
 from .const import (
+    CONF_AWS_API_BASE,
+    CONF_AWS_API_KEY,
     CONF_AUTH0_AUDIENCE,
     CONF_AUTH0_CLIENT_ID,
     CONF_AYLA_APP_ID,
@@ -48,6 +50,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         auth0_client_id=entry.data.get(CONF_AUTH0_CLIENT_ID),
         ayla_app_id=entry.data.get(CONF_AYLA_APP_ID),
         ayla_app_secret=entry.data.get(CONF_AYLA_APP_SECRET),
+        aws_rest_base=entry.data.get(CONF_AWS_API_BASE),
+        aws_api_key=entry.data.get(CONF_AWS_API_KEY),
     )
 
     client = AylaCloudClient(
@@ -107,8 +111,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except AwsCloudError as err:
         # Not fatal: an account that has never been migrated has no AWS
         # presence at all, and Ayla remains perfectly good for those.
-        _LOGGER.debug(
-            "ninja_woodfire %s: AWS backend unavailable (%s); using Ayla", dsn, err,
+        #
+        # It is worth more than a debug line though, because the other way to
+        # land here is a deployment we have not seen. Only an EU AWS host has
+        # ever been captured, so an account served by a different one fails
+        # exactly like an unmigrated account — silently, with Ayla then
+        # serving a frozen snapshot if the grill has in fact been migrated.
+        # Say so once, and point at the override.
+        _LOGGER.info(
+            "ninja_woodfire %s: could not reach the AWS backend (%s); reading "
+            "state from Ayla. Normal if this grill has not been migrated. If "
+            "it has — the app shows live data but Home Assistant does not — "
+            "the AWS host may differ for your region; it can be overridden in "
+            "the integration's advanced setup options.",
+            dsn, err,
         )
 
     coordinator = NinjaWoodfireCoordinator(

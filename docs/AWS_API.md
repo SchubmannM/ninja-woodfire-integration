@@ -56,8 +56,15 @@ authenticates against) and the Ayla endpoints. Regional AWS deployments may
 still exist: the device record carries `"dc": "International"` and the app
 registers for push on `sn-eu-field-iot-ninjakitchen-app`. **Only EU has been
 observed.** If an NA account uses different hosts, these belong in
-`CloudRegion`; a capture from an NA grill would settle it. A failed AWS probe
-falls back to Ayla, so the failure mode is degraded rather than broken.
+`CloudRegion` — where they already live, defaulted to the observed EU values
+for both regions, so confirming an NA host is a one-line data change. A capture
+from an NA grill would settle it.
+
+Until then the failure mode is degraded rather than broken: an unreachable AWS
+backend falls back to Ayla, and setup logs why at INFO with a pointer to the
+`AWS API base URL` / `AWS API key` overrides in the advanced setup options —
+because an account on an unseen deployment fails *identically* to an
+unmigrated one, and the difference matters.
 
 | Method | Path | Purpose |
 |--------|------|---------|

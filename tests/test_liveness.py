@@ -313,7 +313,8 @@ def test_credential_overrides_are_advanced_only() -> None:
     assert advanced, "expected the overrides to be conditional"
 
     for field in ("CONF_AUTH0_AUDIENCE", "CONF_AUTH0_CLIENT_ID",
-                  "CONF_AYLA_APP_ID", "CONF_AYLA_APP_SECRET"):
+                  "CONF_AYLA_APP_ID", "CONF_AYLA_APP_SECRET",
+                  "CONF_AWS_API_BASE", "CONF_AWS_API_KEY"):
         assert field in advanced, f"{field} should be advanced-only"
         assert field not in base, f"{field} must not be on the standard form"
 

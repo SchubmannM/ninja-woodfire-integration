@@ -15,6 +15,11 @@ CONF_AUTH0_AUDIENCE = "auth0_audience"
 CONF_AUTH0_CLIENT_ID = "auth0_client_id"
 CONF_AYLA_APP_ID = "ayla_app_id"
 CONF_AYLA_APP_SECRET = "ayla_app_secret"
+# AWS backend overrides. Only an EU deployment has ever been observed, so a
+# user on a different one (or hit by a key rotation) can correct it here
+# instead of waiting for a release.
+CONF_AWS_API_BASE = "aws_api_base"
+CONF_AWS_API_KEY = "aws_api_key"
 
 # Adaptive polling cadence — fast while cooking, relaxed while idle.
 SCAN_INTERVAL_ACTIVE = timedelta(seconds=1)        # while cooking / preheat / rest (matches app's ~750ms)

@@ -14,6 +14,8 @@ from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
 from ._lib.const import REGION_DEFAULTS, make_region
 
 from .const import (
+    CONF_AWS_API_BASE,
+    CONF_AWS_API_KEY,
     CONF_AUTH0_AUDIENCE,
     CONF_AUTH0_CLIENT_ID,
     CONF_AYLA_APP_ID,
@@ -56,6 +58,8 @@ def _user_schema(show_advanced: bool) -> vol.Schema:
                 vol.Optional(CONF_AUTH0_CLIENT_ID, default=""): str,
                 vol.Optional(CONF_AYLA_APP_ID, default=""): str,
                 vol.Optional(CONF_AYLA_APP_SECRET, default=""): str,
+                vol.Optional(CONF_AWS_API_BASE, default=""): str,
+                vol.Optional(CONF_AWS_API_KEY, default=""): str,
             }
         )
     return vol.Schema(schema)
@@ -87,6 +91,8 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                 auth0_client_id=_opt(user_input.get(CONF_AUTH0_CLIENT_ID)),
                 ayla_app_id=_opt(user_input.get(CONF_AYLA_APP_ID)),
                 ayla_app_secret=_opt(user_input.get(CONF_AYLA_APP_SECRET)),
+                aws_rest_base=_opt(user_input.get(CONF_AWS_API_BASE)),
+                aws_api_key=_opt(user_input.get(CONF_AWS_API_KEY)),
             )
             client = AylaCloudClient(
                 email=user_input[CONF_EMAIL],
@@ -143,6 +149,8 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                 CONF_AUTH0_CLIENT_ID,
                 CONF_AYLA_APP_ID,
                 CONF_AYLA_APP_SECRET,
+                CONF_AWS_API_BASE,
+                CONF_AWS_API_KEY,
             ):
                 v = _opt(self._user_input.get(key))
                 if v:

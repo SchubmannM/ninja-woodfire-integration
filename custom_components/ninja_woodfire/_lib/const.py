@@ -16,6 +16,39 @@ class CloudRegion:
     ayla_device_base: str
     ayla_app_id: str
     ayla_app_secret: str
+    # AWS backend. Only the EU values have been observed; see the note beside
+    # the defaults below. Carried per-region so that confirming an NA host is
+    # a one-line data change rather than a refactor.
+    aws_rest_base: str
+    aws_api_key: str
+
+
+# ---------------------------------------------------------------- AWS backend
+#
+# SharkNinja is migrating grills off Ayla onto their own AWS-backed IoT
+# service. A grill is moved when the mobile app sets `Cloud_Mode = 1` on its
+# device shadow; from that moment it stops publishing state to Ayla entirely
+# and reports only to AWS. Ayla keeps working for *commands*, which is why a
+# migrated grill looks controllable but frozen.
+#
+# Observed in the official Android app (1.25.0) on an EU account. Like the
+# Auth0/Ayla identifiers above, the key is a static per-app value shipped in
+# every install, not a secret.
+#
+# These live on CloudRegion rather than as bare constants because regional
+# deployments probably exist — the device record carries `"dc":
+# "International"` and the app registers for push on the topic
+# `sn-eu-field-iot-ninjakitchen-app`. Only EU has been captured, so both
+# regions currently point at the same host; the config flow exposes overrides
+# so a user on a different deployment can correct it without a release.
+AWS_REST_BASE_OBSERVED = "https://stakra.rannsaka.thor.skegox.com"
+AWS_API_KEY_OBSERVED = "T5m8d45crZDV9I5aCEZr4n2gSqJW64r2RNXqqhh1"
+
+# The app also holds a websocket here for shadow pushes. Polling the REST
+# endpoint is sufficient, so this is recorded but unused.
+AWS_WS_BASE_OBSERVED = "wss://stakra.rannsaka.bifrost.skegox.com"
+
+AWS_CALLER = "ENDUSER_MOBILEAPP"
 
 
 # Per-region defaults. Credentials below are the same identifiers the
@@ -34,7 +67,10 @@ REGION_EU_DEFAULTS = dict(
     ayla_user_base="https://user-field-eu.aylanetworks.com",
     ayla_device_base="https://ads-eu.aylanetworks.com",
     ayla_app_id="android_ninjakitchen_prod-PQ-id",
+
     ayla_app_secret="android_ninjakitchen_prod-k8MHvn6qaNqafn4UNKu9OjR_Epc",
+    aws_rest_base=AWS_REST_BASE_OBSERVED,
+    aws_api_key=AWS_API_KEY_OBSERVED,
 )
 
 REGION_NA_DEFAULTS = dict(
@@ -45,7 +81,12 @@ REGION_NA_DEFAULTS = dict(
     ayla_user_base="https://user-field-39a9391a.aylanetworks.com",
     ayla_device_base="https://ads-field-39a9391a.aylanetworks.com",
     ayla_app_id="android_ninjakitchen_prod-gg-id",
+
     ayla_app_secret="android_ninjakitchen_prod-b85m9QC9-Pp-pTAWhoaJSzt-EhI",
+    # Unverified: only an EU account was ever captured. If an NA grill turns
+    # out to use a different host, this is the line to change.
+    aws_rest_base=AWS_REST_BASE_OBSERVED,
+    aws_api_key=AWS_API_KEY_OBSERVED,
 )
 
 REGION_DEFAULTS: dict[str, dict[str, str]] = {
@@ -61,6 +102,8 @@ def make_region(
     auth0_client_id: str | None = None,
     ayla_app_id: str | None = None,
     ayla_app_secret: str | None = None,
+    aws_rest_base: str | None = None,
+    aws_api_key: str | None = None,
 ) -> CloudRegion:
     """Build a CloudRegion. Each credential falls back to the bundled
     default when not provided — user-supplied values take precedence."""
@@ -74,33 +117,11 @@ def make_region(
         ayla_device_base=base["ayla_device_base"],
         ayla_app_id=ayla_app_id or base["ayla_app_id"],
         ayla_app_secret=ayla_app_secret or base["ayla_app_secret"],
+        aws_rest_base=aws_rest_base or base["aws_rest_base"],
+        aws_api_key=aws_api_key or base["aws_api_key"],
     )
 
-# ---------------------------------------------------------------- AWS backend
-#
-# SharkNinja is migrating grills off Ayla onto their own AWS-backed IoT
-# service. A grill is moved when the mobile app sets `Cloud_Mode = 1` on its
-# device shadow; from that moment it stops publishing state to Ayla entirely
-# and reports only to AWS. Ayla keeps working for *commands*, which is why a
-# migrated grill looks controllable but frozen.
-#
-# These endpoints and the app key were observed in the official Android app
-# (version 1.25.0) on an EU account. Like the Auth0/Ayla identifiers above,
-# the key is a static per-app value shipped in every install, not a secret.
-# No region marker appears in the host names and the same values are used for
-# both regions here; NA is unverified, consistent with the rest of this file.
-# Observed on an EU account only. Unlike Ayla, these hosts carry no region in
-# the name, and the same pair was used throughout — so they are not part of
-# CloudRegion. There is reason to think regional deployments exist though: the
-# device record carries `"dc": "International"`, and the app registers for push
-# on the topic `sn-eu-field-iot-ninjakitchen-app`. If an NA account turns out to
-# use different hosts, these move into CloudRegion. Until someone can capture
-# that, guessing an NA hostname would just be inventing an endpoint — a failed
-# AWS probe falls back to Ayla, which is the correct behaviour anyway.
-AWS_REST_BASE = "https://stakra.rannsaka.thor.skegox.com"
-AWS_WS_BASE = "wss://stakra.rannsaka.bifrost.skegox.com"
-AWS_API_KEY = "T5m8d45crZDV9I5aCEZr4n2gSqJW64r2RNXqqhh1"
-AWS_CALLER = "ENDUSER_MOBILEAPP"
+
 
 # Telemetry keys on the AWS side, which drop the `GET_` prefix Ayla uses.
 AWS_TELEMETRY_GRILL_STATE = "GrillState"

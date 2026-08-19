@@ -31,9 +31,7 @@ from typing import Any
 import aiohttp
 
 from ..const import (
-    AWS_API_KEY,
     AWS_CALLER,
-    AWS_REST_BASE,
     AWS_TELEMETRY_COOK_STATE,
     AWS_TELEMETRY_GRILL_STATE,
     AWS_TELEMETRY_PROBE_STATE,
@@ -214,7 +212,7 @@ class AwsCloudClient:
 
     async def _get(self, path: str) -> Any:
         await self._ensure_session()
-        url = f"{AWS_REST_BASE}{path}"
+        url = f"{self._region.aws_rest_base}{path}"
         async with self._client().get(url, headers=self._headers()) as resp:
             if resp.status == 401:
                 await self.login()
@@ -235,7 +233,7 @@ class AwsCloudClient:
             "accept": "*/*",
             "authorization": f"Bearer {self._id_token}",
             "content-type": "application/json",
-            "x-api-key": AWS_API_KEY,
+            "x-api-key": self._region.aws_api_key,
             "x-iotn-caller": AWS_CALLER,
             "x-sn-nonce": "12345",
             "x-sn-date": datetime.now(tz=timezone.utc).strftime(

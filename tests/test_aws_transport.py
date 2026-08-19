@@ -219,3 +219,44 @@ def test_both_transports_expose_the_same_read_entry_point() -> None:
         assert params[:2] == ["self", "dsn"], (
             f"{cls.__name__}.read_state must take (self, dsn); got {params}"
         )
+
+
+# ------------------------------------------------- per-region endpoints
+
+def test_aws_endpoints_come_from_the_region_not_module_constants() -> None:
+    """The AWS host and key must be overridable per install.
+
+    Only an EU deployment has ever been captured. The device record carries
+    `"dc": "International"` and the app registers for push on
+    `sn-eu-field-iot-ninjakitchen-app`, so regional AWS deployments very
+    likely exist — an account served by a different one would otherwise fail
+    exactly like an unmigrated account, silently falling back to Ayla and its
+    frozen snapshot. Carrying these on CloudRegion makes that a data fix
+    rather than a code change, and lets a user correct it from setup.
+    """
+    import pathlib
+
+    from nwf_lib.const import make_region
+
+    eu = make_region("EU")
+    assert eu.aws_rest_base.startswith("https://")
+    assert eu.aws_api_key
+
+    overridden = make_region(
+        "EU", aws_rest_base="https://example.invalid", aws_api_key="sentinel"
+    )
+    assert overridden.aws_rest_base == "https://example.invalid"
+    assert overridden.aws_api_key == "sentinel"
+    # An override of one must not disturb the rest of the region.
+    assert overridden.auth0_base == eu.auth0_base
+    assert overridden.ayla_app_id == eu.ayla_app_id
+
+    # Both regions must define them, so NA is a one-line data fix.
+    assert make_region("NA").aws_rest_base
+
+    # And the client must actually read them off the region rather than
+    # reaching for a module-level constant.
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "custom_components" / "ninja_woodfire" / "_lib" / "api" / "aws.py").read_text()
+    assert "self._region.aws_rest_base" in src
+    assert "self._region.aws_api_key" in src

@@ -11,7 +11,9 @@
           "auth0_audience": "Auth0 Audience (optional)",
           "auth0_client_id": "Auth0 Client-ID (optional)",
           "ayla_app_id": "Cloud-App-ID (optional)",
-          "ayla_app_secret": "Cloud-App-Secret (optional)"
+          "ayla_app_secret": "Cloud-App-Secret (optional)",
+          "aws_api_base": "AWS-API-Basis-URL (optional)",
+          "aws_api_key": "AWS-API-Schlüssel (optional)"
         }
       },
       "pick_device": {
