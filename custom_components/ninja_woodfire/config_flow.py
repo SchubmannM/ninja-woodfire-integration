@@ -26,22 +26,39 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Standard form: just the user's account info. Advanced fields are
-# optional and only show up via the "Reconfigure" / advanced flow when
-# the bundled defaults stop working.
-STEP_USER = vol.Schema(
-    {
+def _user_schema(show_advanced: bool) -> vol.Schema:
+    """The sign-in form.
+
+    Everyone gets account details and a region. The credential overrides are
+    an escape hatch for one situation — SharkNinja rotating the app
+    identifiers this integration bundles, which would otherwise break sign-in
+    for everybody until a release goes out. Users can then extract fresh
+    values with `scripts/extract_credentials.py` and paste them here.
+
+    That is rare enough, and obscure enough, that it belongs behind Home
+    Assistant's Advanced Mode rather than on the form every user sees when
+    setting up a barbecue. Leaving them off the standard form also means an
+    ordinary setup is never asked for something that looks like a secret.
+
+    Omitted fields simply fall back to the bundled defaults — see `_opt`.
+    """
+    schema: dict[Any, Any] = {
         vol.Required(CONF_EMAIL): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Optional(CONF_REGION, default=DEFAULT_REGION): vol.In(
             list(REGION_DEFAULTS.keys())
         ),
-        vol.Optional(CONF_AUTH0_AUDIENCE, default=""): str,
-        vol.Optional(CONF_AUTH0_CLIENT_ID, default=""): str,
-        vol.Optional(CONF_AYLA_APP_ID, default=""): str,
-        vol.Optional(CONF_AYLA_APP_SECRET, default=""): str,
     }
-)
+    if show_advanced:
+        schema.update(
+            {
+                vol.Optional(CONF_AUTH0_AUDIENCE, default=""): str,
+                vol.Optional(CONF_AUTH0_CLIENT_ID, default=""): str,
+                vol.Optional(CONF_AYLA_APP_ID, default=""): str,
+                vol.Optional(CONF_AYLA_APP_SECRET, default=""): str,
+            }
+        )
+    return vol.Schema(schema)
 
 
 def _opt(value: str | None) -> str | None:
@@ -97,7 +114,7 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=STEP_USER,
+            data_schema=_user_schema(self.show_advanced_options),
             errors=errors,
         )
 

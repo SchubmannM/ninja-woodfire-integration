@@ -147,6 +147,11 @@ author.
 
 ## Fallback: regenerating credentials
 
+> The four override fields are hidden unless **Advanced Mode** is enabled on
+> your Home Assistant user profile. You only need them if SharkNinja rotates
+> the app identifiers this integration bundles.
+
+
 The integration ships with the per-region cloud identifiers used by
 the official Ninja Kitchen mobile app. If those identifiers ever
 rotate (vendor change, new app version, regional split), login will

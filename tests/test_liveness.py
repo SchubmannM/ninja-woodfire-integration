@@ -279,3 +279,44 @@ def test_staged_settings_survive_an_unreadable_grill() -> None:
         assert "_requires_live_state = False" in src, (
             f"{platform}: staged cook settings must not require live state"
         )
+
+
+# --------------------------------------------- config flow surface
+
+def test_credential_overrides_are_advanced_only() -> None:
+    """The four credential-override fields must not appear on the normal form.
+
+    They exist only for the rare case of SharkNinja rotating the bundled app
+    identifiers. Asking every user setting up a barbecue for an "app secret"
+    is noise at best and alarming at worst, so they live behind Home
+    Assistant's Advanced Mode.
+
+    Checked against the source rather than by importing the module, which
+    needs Home Assistant present.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "custom_components" / "ninja_woodfire" / "config_flow.py").read_text()
+
+    # The form must be built per-request from the advanced-mode flag, not a
+    # module-level constant that always carries every field.
+    assert "self.show_advanced_options" in src, (
+        "the sign-in form must respect Home Assistant's Advanced Mode"
+    )
+
+    m = re.search(r"def _user_schema\(.*?\n    return vol\.Schema\(schema\)", src, re.S)
+    assert m, "expected a _user_schema() builder"
+    body = m.group(0)
+    base, _, advanced = body.partition("if show_advanced:")
+    assert advanced, "expected the overrides to be conditional"
+
+    for field in ("CONF_AUTH0_AUDIENCE", "CONF_AUTH0_CLIENT_ID",
+                  "CONF_AYLA_APP_ID", "CONF_AYLA_APP_SECRET"):
+        assert field in advanced, f"{field} should be advanced-only"
+        assert field not in base, f"{field} must not be on the standard form"
+
+    # Account details obviously still are.
+    for field in ("CONF_EMAIL", "CONF_PASSWORD", "CONF_REGION"):
+        assert field in base, f"{field} must stay on the standard form"
