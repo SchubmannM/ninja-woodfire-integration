@@ -20,8 +20,14 @@ class NinjaWoodfireEntity(CoordinatorEntity[NinjaWoodfireCoordinator]):
     # dropped off the cloud yesterday still renders as a tidy idle grill.
     #
     # Set False for entities that remain meaningful without one: locally
-    # staged cook settings, static device info, and the connectivity
-    # diagnostics whose whole job is to report that the grill is away.
+    # staged cook settings, static device info, the connectivity diagnostics
+    # whose whole job is to report that the grill is away, and — importantly —
+    # anything that *commands* the grill.
+    #
+    # Reads and writes fail independently on this hardware. A grill can be
+    # unreachable for state (never publishes to the cloud) while still acting
+    # on commands (the cloud delivers datapoint writes to it). So this flag
+    # governs "can I trust what I am displaying", never "can I send this".
     _requires_live_state: bool = True
 
     def __init__(self, coordinator: NinjaWoodfireCoordinator) -> None:

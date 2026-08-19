@@ -222,3 +222,60 @@ def test_active_state_vocabulary_has_one_definition() -> None:
         assert phase in ACTIVE_COOK_STATES, phase
     for phase in ("idle", "none", "done", "powered OFF"):
         assert phase not in ACTIVE_COOK_STATES, phase
+
+
+# --------------------------------------------- reads and writes fail apart
+
+def test_command_availability_is_independent_of_read_liveness() -> None:
+    """Confirmed on real hardware: commands land while state never arrives.
+
+    An OG900-EU accepted cook commands sent through the cloud from mobile data
+    alone, while reporting `connection_status: Offline` and publishing no state
+    for 1306 consecutive polls. So an unreadable grill is not an
+    uncommandable one, and the platform tables must reflect that.
+
+    Checked against the entity descriptions rather than by importing the HA
+    platform modules, which need Home Assistant present.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    button_src = (root / "custom_components" / "ninja_woodfire" / "button.py").read_text()
+
+    # Commands must not be gated on the read path at the class level.
+    assert "_requires_live_state = False" in button_src, (
+        "cook commands must stay available when state is unreadable — "
+        "the write path works independently of the read path"
+    )
+
+    # ...but skip-preheat must be, because it re-issues the whole cook payload
+    # and needs the running cook to preserve it.
+    assert "needs_live_cook=True" in button_src
+    skip = button_src[button_src.index('key="skip_preheat"'):]
+    assert "needs_live_cook=True" in skip[:600], (
+        "skip_preheat re-issues the entire cook payload; without a readable "
+        "cook it would overwrite mode/temp/duration with staged values"
+    )
+    # Start and stop are well-defined without live state and must not be gated.
+    for key in ('key="start_cook"', 'key="stop_cook"'):
+        block = button_src[button_src.index(key):]
+        block = block[:block.index("),")]
+        assert "needs_live_cook" not in block, f"{key} should not be gated"
+
+
+def test_staged_settings_survive_an_unreadable_grill() -> None:
+    """Staging a cook must work with no read path at all.
+
+    It is the only way to drive the grill from HA when state never arrives,
+    so the staged values live in the coordinator and depend on nothing
+    the grill reports.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    for platform in ("number.py", "select.py", "switch.py"):
+        src = (root / "custom_components" / "ninja_woodfire" / platform).read_text()
+        assert "_requires_live_state = False" in src, (
+            f"{platform}: staged cook settings must not require live state"
+        )

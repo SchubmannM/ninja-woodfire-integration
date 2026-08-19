@@ -140,6 +140,15 @@ Air Fry cook, with the app force-quit and after a clean power-cycle:
   written at module-connect time, and not one of them a cooking state.
 - Device record reads `connection_priority: ["LAN"]`.
 
+**The write direction still works.** Cook commands sent as Ayla datapoints
+reach the grill and are acted on — verified from mobile data only, with the
+grill reporting `connection_status: Offline` and publishing no state
+throughout. The module evidently keeps a lightweight ANS registration so it can
+*receive* pushes (`ans_enabled: true`) while never *publishing* telemetry to
+the cloud. That asymmetry is why the integration keeps cook commands available
+even when every state entity is unavailable, and it means `connection_status`
+must never be used to decide whether a command can be sent.
+
 Ruled out by direct measurement: DNS filtering (no matching rule; the grill
 never queried the resolver; disabling it changed nothing), the app's
 "Upload my Cook Data" setting (ON, mid-cook, cloud still frozen — and it is an
