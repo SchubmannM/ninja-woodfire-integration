@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Ninja Woodfire",
-        "description": "Mit deinem Ninja-Kitchen-Account anmelden. Die vier erweiterten Felder leer lassen — sie sind nur ein Fallback falls die mitgelieferten Defaults nicht mehr funktionieren. Anleitung zum selbst-Extrahieren in der Projekt-README.",
+        "description": "Mit deinem Ninja-Kitchen-Account anmelden. Wähle die Region, zu der dein Account gehört — mit der falschen Region schlägt die Anmeldung fehl.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort",

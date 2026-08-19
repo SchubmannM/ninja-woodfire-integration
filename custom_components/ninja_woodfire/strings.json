@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Ninja Woodfire",
-        "description": "Sign in with your Ninja Kitchen account. Leave the four advanced fields below empty unless the bundled defaults stop working — see the project README for the extractor script if you need to override them.",
+        "description": "Sign in with your Ninja Kitchen account. Pick the region your account belongs to — signing in against the wrong one will fail.",
         "data": {
           "email": "Email",
           "password": "Password",

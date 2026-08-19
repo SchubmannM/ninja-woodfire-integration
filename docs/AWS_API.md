@@ -49,6 +49,16 @@ sub: "auth0|<userId>"   ->   <userId>
 
 Base: `https://stakra.rannsaka.thor.skegox.com`
 
+**Region:** unlike Ayla, these hosts carry no region marker and the same pair
+served an EU account throughout, so the integration does not vary them by
+region — the `Region` setting only selects the Auth0 tenant (which the AWS API
+authenticates against) and the Ayla endpoints. Regional AWS deployments may
+still exist: the device record carries `"dc": "International"` and the app
+registers for push on `sn-eu-field-iot-ninjakitchen-app`. **Only EU has been
+observed.** If an NA account uses different hosts, these belong in
+`CloudRegion`; a capture from an NA grill would settle it. A failed AWS probe
+falls back to Ayla, so the failure mode is degraded rather than broken.
+
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/householdsEndUser?userId={userId}` | `{"households": ["<id>"]}` |

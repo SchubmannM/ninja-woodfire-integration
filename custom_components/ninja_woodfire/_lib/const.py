@@ -89,6 +89,14 @@ def make_region(
 # the key is a static per-app value shipped in every install, not a secret.
 # No region marker appears in the host names and the same values are used for
 # both regions here; NA is unverified, consistent with the rest of this file.
+# Observed on an EU account only. Unlike Ayla, these hosts carry no region in
+# the name, and the same pair was used throughout — so they are not part of
+# CloudRegion. There is reason to think regional deployments exist though: the
+# device record carries `"dc": "International"`, and the app registers for push
+# on the topic `sn-eu-field-iot-ninjakitchen-app`. If an NA account turns out to
+# use different hosts, these move into CloudRegion. Until someone can capture
+# that, guessing an NA hostname would just be inventing an endpoint — a failed
+# AWS probe falls back to Ayla, which is the correct behaviour anyway.
 AWS_REST_BASE = "https://stakra.rannsaka.thor.skegox.com"
 AWS_WS_BASE = "wss://stakra.rannsaka.bifrost.skegox.com"
 AWS_API_KEY = "T5m8d45crZDV9I5aCEZr4n2gSqJW64r2RNXqqhh1"
