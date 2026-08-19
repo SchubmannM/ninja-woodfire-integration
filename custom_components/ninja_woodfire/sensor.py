@@ -405,6 +405,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [NinjaSensor(coordinator, desc) for desc in SENSORS]
     entities.extend(NinjaDiagnosticSensor(coordinator, desc) for desc in DIAGNOSTICS)
     entities.append(NinjaLastReportSensor(coordinator))
+    entities.append(NinjaBackendSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -506,3 +507,26 @@ class NinjaLastReportSensor(NinjaWoodfireEntity, SensorEntity):
             "age_seconds": None if age is None else int(age),
             "state_is_live": self.coordinator.state_is_live,
         }
+
+
+class NinjaBackendSensor(NinjaWoodfireEntity, SensorEntity):
+    """Which cloud backend state is being read from.
+
+    SharkNinja is migrating grills from Ayla to their own AWS service, and a
+    migrated grill stops publishing to Ayla entirely. Knowing which backend is
+    in play is the first thing worth checking when live data is missing, so it
+    is surfaced rather than left in the log.
+    """
+
+    _requires_live_state = False
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "backend"
+    _attr_icon = "mdi:cloud-outline"
+
+    def __init__(self, coordinator: NinjaWoodfireCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dsn}_backend"
+
+    @property
+    def native_value(self) -> Any:
+        return self.coordinator.backend

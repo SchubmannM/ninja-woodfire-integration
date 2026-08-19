@@ -58,7 +58,8 @@
       "firmware_version": { "name": "Firmware-Version" },
       "oem_model": { "name": "Modell" },
       "dsn": { "name": "Geräte-Seriennr. (DSN)" },
-      "last_report": { "name": "Letzte Cloud-Meldung" }
+      "last_report": { "name": "Letzte Cloud-Meldung" },
+      "backend": { "name": "Status-Backend" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Deckel" },

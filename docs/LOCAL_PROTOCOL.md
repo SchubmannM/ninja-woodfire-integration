@@ -4,9 +4,20 @@ Findings from a reverse-engineering session against a real **OG900-EU**
 (Ninja Woodfire Pro Connect XL, appliance serial `SND…`, module firmware
 `M1.1.0.179_X3.4.034`, Ayla agent `ADA 1.5-beta ameba`).
 
-This exists because on that unit the Ayla cloud **never receives live state**
-(see README § *Known limitation*), so the cloud transport this integration is
-built on cannot work. Any future local transport starts here.
+> **Superseded — read this first.** This was written while the cloud path
+> looked like a dead end. It is not: the grill reports fine, just to
+> SharkNinja's **AWS** backend rather than Ayla, and the integration now reads
+> from there. See [AWS_API.md](AWS_API.md). Nothing below is needed to make
+> the integration work.
+>
+> It is kept because the findings are hard-won and still true: the grill does
+> expose an undocumented encrypted stream on the LAN, and if the vendor ever
+> shuts the cloud down, or someone wants a genuinely local integration, this
+> is the map of what is there and what was already ruled out.
+
+This began as an investigation into why one `OG900-EU` never published live
+state to Ayla. That question is now answered elsewhere; what follows is the
+local-network reconnaissance done along the way.
 
 Everything below was obtained by observing the device on the LAN. Nothing was
 written to the grill beyond a LAN-mode registration attempt.
@@ -111,9 +122,10 @@ Over a 282-frame corpus of the 68-byte type:
   MD5, SHA-1[:16], SHA-256, under AES-ECB / AES-CBC (zero IV and
   frame-embedded IV) / AES-CTR, plus RC4 and repeating-XOR.
 
-### What is still needed
+### What would still be needed
 
-The transport framing is understood; the payload is not. Because the keystream
+Only if someone wants a truly local transport — the integration does not need
+this. The framing is understood; the payload is not. Because the keystream
 never repeats and the nonce is not on the wire, both the **key** and the
 **nonce/counter derivation** have to come from the official Android app —
 `jadx` on the APK, or a `frida` hook at runtime. Search leads for whoever picks
@@ -127,10 +139,17 @@ compelling — but the app's traffic was never actually captured. `SET_Enable_RT
 ("real-time log") hints at an alternative purpose. Confirming it needs a packet
 capture of the phone talking to the grill.
 
-## Why the cloud path fails on this unit
+## Why the *Ayla* path fails on this unit
 
-For completeness, since it motivates all of the above. Measured during a real
-Air Fry cook, with the app force-quit and after a clean power-cycle:
+Retained because it motivated the reconnaissance above, and because the
+symptom is worth recognising. The cause was later established: the grill had
+been migrated to SharkNinja's AWS backend and stopped publishing to Ayla
+entirely — the phone app writes `Cloud_Mode = 1` to the AWS device shadow,
+and Ayla goes read-dead for that grill from that moment. Details in
+[AWS_API.md](AWS_API.md).
+
+Measured during a real Air Fry cook, with the app force-quit and after a clean
+power-cycle:
 
 - 248 consecutive cloud polls, **zero** value changes.
 - `connection_status: Offline` throughout, while the grill answered ping in
@@ -149,7 +168,8 @@ the cloud. That asymmetry is why the integration keeps cook commands available
 even when every state entity is unavailable, and it means `connection_status`
 must never be used to decide whether a command can be sent.
 
-Ruled out by direct measurement: DNS filtering (no matching rule; the grill
+Ruled out by direct measurement at the time — the actual cause, an AWS
+migration, was not visible from the Ayla side at all: DNS filtering (no matching rule; the grill
 never queried the resolver; disabling it changed nothing), the app's
 "Upload my Cook Data" setting (ON, mid-cook, cloud still frozen — and it is an
 app-only feature), the app holding a LAN session (force-quit, no change),

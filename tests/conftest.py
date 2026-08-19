@@ -100,8 +100,28 @@ def hydrate_as_captured(name: str):
     )
 
 
-def fixture_names() -> list[str]:
-    return sorted(p.stem for p in FIXTURES.glob("*.json"))
+def fixture_names(transport: str = "ayla") -> list[str]:
+    """Fixture stems for one transport.
+
+    Fixtures declare their wire format in `_transport`; the Ayla captures
+    predate the field and default to it. The two envelopes differ (Ayla nests
+    under `properties`, AWS under `telemetry`), so tests must not mix them.
+    """
+    names = []
+    for path in sorted(FIXTURES.glob("*.json")):
+        with open(path) as fh:
+            data = json.load(fh)
+        if data.get("_transport", "ayla") == transport:
+            names.append(path.stem)
+    return names
+
+
+def aws_fixture_names() -> list[str]:
+    return sorted(p.stem for p in FIXTURES.glob("aws_*.json"))
+
+
+def ayla_fixture_names() -> list[str]:
+    return sorted(p.stem for p in FIXTURES.glob("*.json") if not p.stem.startswith("aws_"))
 
 
 @pytest.fixture

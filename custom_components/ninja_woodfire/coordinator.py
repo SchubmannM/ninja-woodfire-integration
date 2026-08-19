@@ -8,14 +8,15 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from ._lib.api.aws import AwsAuthError, AwsTransportError
 from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
+from ._lib.const import BACKEND_AYLA
 from ._lib.capabilities import GrillCapabilities, for_oem_model
 from ._lib.models import CombinedState
 
 from .const import (
     ACTIVE_STATES,
     DEFAULT_SCAN_INTERVAL,
-    DEVICE_META_INTERVAL,
     DOMAIN,
     EVENT_COOK_DONE,
     EVENT_COOK_HALFTIME,
@@ -42,7 +43,19 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         capabilities: GrillCapabilities,
         device_key: int,
         device_info_extra: dict[str, str] | None = None,
+        reader: Any | None = None,
+        backend: str = BACKEND_AYLA,
     ) -> None:
+        """
+        Args:
+            client: the Ayla client. All commands go through it — Ayla accepts
+                writes even for a grill that has been migrated to AWS and no
+                longer reports state there.
+            reader: where state is read from. Defaults to `client`; on a
+                migrated grill this is the AWS client instead. Anything with
+                an async `read_state(dsn)` returning a CombinedState will do.
+            backend: which backend `reader` talks to, for diagnostics.
+        """
         super().__init__(
             hass,
             _LOGGER,
@@ -50,6 +63,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.client = client
+        self.reader = reader if reader is not None else client
+        self.backend = backend
         self.dsn = dsn
         self.capabilities = capabilities
         self._device_key: int = device_key
@@ -70,10 +85,6 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # Lifecycle-event tracking — one-shot flags reset on each cook.
         self._prev_grill_state: str | None = None
         self._prev_cook_state: str | None = None
-        # Cached device record (carries connection_status), refreshed on its
-        # own slower cadence than the property poll.
-        self._device_meta: dict[str, Any] | None = None
-        self._device_meta_at: datetime | None = None
         # Latches so the connectivity diagnosis is logged on transition only,
         # not once per poll.
         self._logged_offline: bool = False
@@ -84,11 +95,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
     async def _async_update_data(self) -> CombinedState:
         try:
-            device = await self._device_metadata()
-            state = await self.client.get_combined_state(self.dsn, device=device)
-        except AuthError as err:
+            state = await self.reader.read_state(self.dsn)
+        except (AuthError, AwsAuthError) as err:
             raise UpdateFailed(f"auth: {err}") from err
-        except TransportError as err:
+        except (TransportError, AwsTransportError) as err:
             raise UpdateFailed(f"transport: {err}") from err
 
         self._diagnose_liveness(state)
@@ -111,32 +121,6 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._emit_lifecycle_events(state)
         return state
 
-    async def _device_metadata(self) -> dict[str, Any] | None:
-        """The cached device record, refreshed at most every DEVICE_META_INTERVAL.
-
-        Its `connection_status` is what makes an "idle" snapshot
-        interpretable, so a failure to refresh must not silently fall back to
-        the optimistic default — we keep serving the last record we have and
-        only return None if we have never managed to fetch one.
-        """
-        now = datetime.now(tz=timezone.utc)
-        fresh = (
-            self._device_meta is not None
-            and self._device_meta_at is not None
-            and (now - self._device_meta_at) < DEVICE_META_INTERVAL
-        )
-        if fresh:
-            return self._device_meta
-        try:
-            self._device_meta = await self.client.get_device(self.dsn)
-            self._device_meta_at = now
-        except (AuthError, TransportError) as err:
-            _LOGGER.debug(
-                "ninja_woodfire %s: device metadata refresh failed (%s); "
-                "reusing last known record", self.dsn, err,
-            )
-        return self._device_meta
-
     def _diagnose_liveness(self, state: CombinedState) -> None:
         """Log *why* there is no live data, once per transition.
 
@@ -153,11 +137,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if not state.online:
             if not self._logged_offline:
                 _LOGGER.warning(
-                    "ninja_woodfire %s: grill is not connected to the cloud "
-                    "(connection_status=%s); its last report is %s old. "
+                    "ninja_woodfire %s [%s]: grill is not connected to the "
+                    "cloud (connection_status=%s); its last report is %s old. "
                     "Entities are unavailable rather than showing that stale "
                     "snapshot as current state.",
-                    self.dsn, state.connection_status, age_txt,
+                    self.dsn, self.backend, state.connection_status, age_txt,
                 )
                 self._logged_offline = True
             self._logged_frozen = False
@@ -167,11 +151,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         if state.is_stale(int(STATE_MAX_AGE.total_seconds())):
             if not self._logged_frozen:
                 _LOGGER.warning(
-                    "ninja_woodfire %s: grill reports connected but has not "
-                    "sent an update for %s. The cloud is serving a cached "
-                    "snapshot (state=%s), so entities are unavailable. This "
-                    "grill only streams live state to LAN/BLE clients.",
-                    self.dsn, age_txt, state.grill.state,
+                    "ninja_woodfire %s [%s]: grill reports connected but has "
+                    "not sent an update for %s; the backend is serving a "
+                    "cached snapshot (state=%s), so entities are unavailable. "
+                    "On the Ayla backend this usually means the grill has been "
+                    "migrated to SharkNinja's AWS service and no longer "
+                    "reports there at all — see README.",
+                    self.dsn, self.backend, age_txt, state.grill.state,
                 )
                 self._logged_frozen = True
             return

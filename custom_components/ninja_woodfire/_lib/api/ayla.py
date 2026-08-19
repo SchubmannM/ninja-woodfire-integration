@@ -38,6 +38,12 @@ class TransportError(NinjaCloudError):
     """Network / 5xx / unexpected payload."""
 
 
+# The device record carries `connection_status`, which changes far more slowly
+# than the state properties — refreshing it on every one-second cook poll would
+# double the request rate for no benefit.
+DEVICE_META_MAX_AGE_S = 30.0
+
+
 @dataclass
 class AylaSession:
     access_token: str
@@ -65,6 +71,8 @@ class AylaCloudClient:
         self._auth0_id_token: str | None = None
         self._ayla: AylaSession | None = None
         self._lock = asyncio.Lock()
+        self._device_meta: dict[str, Any] | None = None
+        self._device_meta_at: float = 0.0
 
     async def __aenter__(self) -> "AylaCloudClient":
         if self._owns_session and self._http is None:
@@ -251,6 +259,30 @@ class AylaCloudClient:
             state.connection_status = status
             state.online = str(status).strip().casefold() == "online"
         return state
+
+    async def read_state(self, dsn: str) -> CombinedState:
+        """One poll's worth of state, connectivity included.
+
+        Two requests are needed on this backend — the properties and the
+        device record — so the device record is cached for
+        DEVICE_META_MAX_AGE_S. A failure to refresh it keeps the previous
+        record rather than falling back to the optimistic default, because
+        silently claiming a grill is online is exactly the bug this exists to
+        prevent.
+        """
+        now = time.time()
+        if (
+            self._device_meta is None
+            or (now - self._device_meta_at) >= DEVICE_META_MAX_AGE_S
+        ):
+            try:
+                self._device_meta = await self.get_device(dsn)
+                self._device_meta_at = now
+            except NinjaCloudError as err:
+                _LOGGER.debug(
+                    "device metadata refresh failed (%s); reusing last record", err
+                )
+        return await self.get_combined_state(dsn, device=self._device_meta)
 
     async def set_property_datapoint(
         self, dsn: str, name: str, value: Any

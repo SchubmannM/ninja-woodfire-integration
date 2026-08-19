@@ -10,8 +10,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from ._lib.api.aws import AwsCloudClient, AwsCloudError
 from ._lib.api.ayla import AuthError, AylaCloudClient, TransportError
-from ._lib.const import make_region
+from ._lib.const import BACKEND_AWS, BACKEND_AYLA, make_region
 
 from .const import (
     CONF_AUTH0_AUDIENCE,
@@ -75,12 +76,49 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not device_key:
         raise ConfigEntryNotReady(f"device {dsn} has no device key")
 
+    # Pick where state is read from. SharkNinja is migrating grills onto their
+    # own AWS-backed service; a migrated grill stops publishing to Ayla
+    # entirely, so Ayla would keep serving whatever snapshot it last received
+    # — indefinitely, and with no error to notice. Commands are unaffected and
+    # continue to go through Ayla either way.
+    reader: Any = client
+    backend = BACKEND_AYLA
+    aws_client = AwsCloudClient(
+        email=entry.data[CONF_EMAIL],
+        password=entry.data[CONF_PASSWORD],
+        region=region,
+        session=async_get_clientsession(hass),
+    )
+    try:
+        await aws_client.login()
+        if await aws_client.find_device(dsn) is not None:
+            reader = aws_client
+            backend = BACKEND_AWS
+            _LOGGER.info(
+                "ninja_woodfire %s: grill found on SharkNinja's AWS backend; "
+                "reading state from there. Commands still go through Ayla.",
+                dsn,
+            )
+        else:
+            _LOGGER.debug(
+                "ninja_woodfire %s: not present on the AWS backend, "
+                "reading state from Ayla", dsn,
+            )
+    except AwsCloudError as err:
+        # Not fatal: an account that has never been migrated has no AWS
+        # presence at all, and Ayla remains perfectly good for those.
+        _LOGGER.debug(
+            "ninja_woodfire %s: AWS backend unavailable (%s); using Ayla", dsn, err,
+        )
+
     coordinator = NinjaWoodfireCoordinator(
         hass=hass,
         client=client,
         dsn=dsn,
         capabilities=capabilities,
         device_key=device_key,
+        reader=reader,
+        backend=backend,
         device_info_extra={
             "oem_model": str(device.get("oem_model", "")),
             "model": str(device.get("model", "")),

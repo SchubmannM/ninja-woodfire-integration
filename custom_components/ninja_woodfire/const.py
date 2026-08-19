@@ -38,10 +38,6 @@ ACTIVE_STATES = ACTIVE_COOK_STATES
 # window is still visible on the "last reported" diagnostic sensor.
 STATE_MAX_AGE = timedelta(minutes=5)
 
-# The device record (which carries connection_status) is refreshed on its
-# own slower cadence — it is a second HTTP request, and connectivity does
-# not change between one-second property polls.
-DEVICE_META_INTERVAL = timedelta(seconds=30)
 
 # Cook-lifecycle events fired on the HA event bus. See coordinator
 # `_emit_lifecycle_events`. Automations subscribe via `event_type`.

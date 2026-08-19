@@ -76,6 +76,33 @@ def make_region(
         ayla_app_secret=ayla_app_secret or base["ayla_app_secret"],
     )
 
+# ---------------------------------------------------------------- AWS backend
+#
+# SharkNinja is migrating grills off Ayla onto their own AWS-backed IoT
+# service. A grill is moved when the mobile app sets `Cloud_Mode = 1` on its
+# device shadow; from that moment it stops publishing state to Ayla entirely
+# and reports only to AWS. Ayla keeps working for *commands*, which is why a
+# migrated grill looks controllable but frozen.
+#
+# These endpoints and the app key were observed in the official Android app
+# (version 1.25.0) on an EU account. Like the Auth0/Ayla identifiers above,
+# the key is a static per-app value shipped in every install, not a secret.
+# No region marker appears in the host names and the same values are used for
+# both regions here; NA is unverified, consistent with the rest of this file.
+AWS_REST_BASE = "https://stakra.rannsaka.thor.skegox.com"
+AWS_WS_BASE = "wss://stakra.rannsaka.bifrost.skegox.com"
+AWS_API_KEY = "T5m8d45crZDV9I5aCEZr4n2gSqJW64r2RNXqqhh1"
+AWS_CALLER = "ENDUSER_MOBILEAPP"
+
+# Telemetry keys on the AWS side, which drop the `GET_` prefix Ayla uses.
+AWS_TELEMETRY_GRILL_STATE = "GrillState"
+AWS_TELEMETRY_COOK_STATE = "CookState"
+AWS_TELEMETRY_PROBE_STATE = "ProbeState"
+
+BACKEND_AYLA = "ayla"
+BACKEND_AWS = "aws"
+
+
 # Property names used by the cloud API.
 PROP_GRILL_STATE = "GET_GrillState"
 PROP_COOK_STATE = "GET_CookState"

@@ -58,7 +58,8 @@
       "oem_model": { "name": "Model" },
       "dsn": { "name": "Device serial (DSN)" },
       "preheat_progress": { "name": "Preheat progress" },
-      "last_report": { "name": "Last cloud report" }
+      "last_report": { "name": "Last cloud report" },
+      "backend": { "name": "State backend" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Lid" },

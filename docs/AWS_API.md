@@ -1,0 +1,157 @@
+# SharkNinja's AWS grill API
+
+SharkNinja is migrating Ninja grills off Ayla onto their own AWS-backed IoT
+service. This documents that backend, as observed from a real **OG900-EU**
+(Ninja Kitchen Android app 1.25.0).
+
+It matters because the migration is silent and one-way from the integration's
+point of view: **a migrated grill stops publishing telemetry to Ayla
+completely**, while Ayla keeps serving the last datapoint it ever received,
+forever, with no error and no staleness marker. See README § *Known
+limitation*.
+
+## How a grill gets migrated
+
+The phone app writes `Cloud_Mode = 1` into the grill's AWS device shadow. On
+the measured unit that happened at a precise, recorded moment:
+
+```
+2026-08-18T17:29:38Z   Ayla   SET_Exec_Command = "setkey:<8 chars>"
+2026-08-18T17:29:39Z   Ayla   SET_Exec_Command = "*"   echo=true   (grill acked)
+2026-08-18T17:29:41Z   AWS    shadow desired: Cloud_Mode = 1, user_linked = true
+                              ── Ayla never heard from the grill again ──
+```
+
+Everything after that is consistent with a receive-only Ayla presence: over the
+following 24 hours Ayla logged **zero** state datapoints across 2367 polls,
+including through two full cooks, while reporting `connection_status: Offline`
+and `connection_priority: ["LAN"]`.
+
+**Commands still work over Ayla.** Datapoint writes to `SET_Cook_Command` reach
+a migrated grill and are acted on — verified from mobile data only, with the
+grill "Offline" and publishing nothing. The module keeps a lightweight ANS
+registration to *receive* pushes while never *publishing* telemetry. That is
+why this integration reads from AWS but still writes through Ayla.
+
+## Authentication
+
+No new credential flow. The AWS API accepts the **same Auth0 `id_token`** the
+Ayla flow already fetches — the shared grant lives in `_lib/api/auth0.py`.
+
+The account's user id is the `sub` claim with the `auth0|` prefix stripped, so
+it needs no lookup:
+
+```
+sub: "auth0|<userId>"   ->   <userId>
+```
+
+## Endpoints
+
+Base: `https://stakra.rannsaka.thor.skegox.com`
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/householdsEndUser?userId={userId}` | `{"households": ["<id>"]}` |
+| `GET` | `/devicesEndUserController/{householdId}/users/{userId}?includeRegistry=true&includeConnectivityStatus=true` | every device, **with live telemetry** |
+| `GET` | `/devicesEndUserController/{householdId}/devices/{deviceId}` | one device |
+
+Headers on every request:
+
+```
+authorization:  Bearer <auth0 id_token>
+x-api-key:      <static per-app key>        (public in every app install,
+                                             same category as the bundled
+                                             Auth0/Ayla identifiers)
+x-iotn-caller:  ENDUSER_MOBILEAPP
+x-sn-nonce:     12345                       (fixed in the app; not validated)
+x-sn-date:      <ISO-8601 UTC, ms precision>
+content-type:   application/json
+```
+
+A single authenticated GET returns live telemetry, so the existing polling
+coordinator fits unchanged. The app additionally holds a WebSocket at
+`wss://stakra.rannsaka.bifrost.skegox.com` receiving `IOT_SHADOW_UPDATE_EVENT`
+pushes (`source: "iot-shadow-update-rule"`), but polling is sufficient and far
+simpler in Home Assistant. Not implemented here.
+
+## Device record
+
+```jsonc
+{
+  "deviceId": "<appliance serial>",     // note: NOT the Ayla DSN
+  "registry": {
+    "modelNumber": "OG900-EU",
+    "OTA_FW_VERSION": "M1.1.0.179_X3.4.034",
+    "WiFiModuleSerialNumber": "<ayla dsn>-<appliance serial>",   // ties both ids
+    "serialNumber": "<appliance serial>", "macAddress": "…", "brandName": "Ninja"
+  },
+  "telemetry": {
+    "GrillState": "{…}",   // same JSON blobs as Ayla, no GET_ prefix
+    "CookState":  "{…}",
+    "ProbeState": "{…}",
+    "RSSI": -66
+  },
+  "connectivityStatus": {
+    "connected": true,
+    "lastConnectedAt": "…", "lastDisconnectedAt": "…"
+  },
+  "updatedAt": "2026-08-19T18:36:27.530Z"
+}
+```
+
+Two identifiers are in play: the app and this API key on the **appliance
+serial** (`SND…`), Ayla on the **module DSN** (`AC000W…`). `registry
+.WiFiModuleSerialNumber` concatenates them, which is what lets `find_device()`
+match a grill by either.
+
+`connectivityStatus.connected` plus `updatedAt` give a genuine liveness
+signal — unlike Ayla, where a successful poll proves nothing about freshness.
+
+## Payload dialect
+
+The structures are identical to Ayla's, but **every space is stripped**, from
+object keys *and* enum values. `_lib/api/aws.py::normalise` canonicalises onto
+the Ayla spelling so `models.py` and the capability tables need no changes, and
+so cook commands keep using the spelling the firmware expects.
+
+| Ayla | AWS |
+|------|-----|
+| `"seconds set"` | `"secondsset"` |
+| `"seconds left"` | `"secondsleft"` |
+| `"probes active"` | `"probesactive"` |
+| `"lid open"` | `"lidopen"` |
+| `"plugged in"` | `"pluggedin"` |
+| `"air crisp"` (mode) | `"aircrisp"` |
+| `"powered OFF"` (state) | `"poweredOFF"` |
+| `"get food"` (state) | `"getfood"` |
+
+## Cook lifecycle, as observed
+
+Captured live through an Air Crisp cook (150 °C, 3 min). Fixtures for each
+phase are in `tests/fixtures/aws_*.json`.
+
+`GrillState.state` reads `"cooking"` for the whole cook including preheat — the
+real sub-phase is in `CookState.state.state`, which moves
+`preheat` (with `progress`) → `heat` → `none`.
+
+User-facing prompts arrive in `GrillState.message`, paired with an
+`eventmask` bitfield:
+
+| `message` | `eventmask` | meaning |
+|-----------|-------------|---------|
+| `"1:addfood"` | `0x00` | add food (cook running) |
+| `"6:done"` | `0x40` | cook complete |
+| `"7:getfood"` | `0xC0` | remove food |
+
+During preheat `secondsleft` stays pinned at `secondsset` and `endtimeutc`
+keeps sliding forward — the countdown only starts once preheat ends, so
+derived progress must exclude the preheat phase.
+
+## Not implemented
+
+- **Writes over AWS.** The shadow's `desired.Cook_Command` is the app's write
+  path and mirrors the Ayla cook payload (`id`, `mode`, `temp`, `seconds set`,
+  `smoke`, `skip preheat`). This integration writes through Ayla instead,
+  because that path is verified to work on a migrated grill and needs no new
+  code. Worth revisiting if Ayla is ever switched off.
+- **The WebSocket.** Polling covers it.

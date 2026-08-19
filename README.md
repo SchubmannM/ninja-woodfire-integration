@@ -30,26 +30,39 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
   - `ninja_woodfire_cook_halftime`
   - `ninja_woodfire_cook_done`
   - `ninja_woodfire_probe_target_reached`
-- Connectivity diagnostics: `Cloud connected` and `Last cloud report`,
+- Connectivity diagnostics: `Backend`, `Cloud connected` and `Last cloud report`,
   so a grill that isn't reporting is visible as such rather than
   silently rendering as an idle grill (see *Known limitation* below).
 
-## Known limitation — the cloud may never report live state
+## Two backends: Ayla and AWS
 
-The grill's Wi-Fi module does not keep a live copy of its state in the
-Ayla cloud. On at least some units it pushes one snapshot when the
-module connects and then goes quiet, streaming live state only to
-clients on the local network or over BLE — which is what the official
-app uses. The Ayla cloud keeps serving that one snapshot indefinitely,
-with no indication of its age.
+SharkNinja is migrating Ninja grills off Ayla onto their own AWS-backed
+service. The integration handles both and picks automatically at setup:
+if your grill is present on the AWS backend it reads state from there,
+otherwise it uses Ayla. The `Backend` diagnostic sensor shows which is
+in play. **Commands always go through Ayla**, which accepts them on
+either kind of grill.
 
-Measured on an `OG900-EU` during a real Air Fry cook: 467 consecutive
-cloud polls, zero changes. The cloud reported `connection_status:
-Offline` and a `GET_GrillState` of `idle` whose `data_updated_at` was
-**22 hours old**, while the grill was actively preheating and the app
-showed the cook live. Its entire 30-day datapoint history contained
-five state datapoints, all written at module-connect time. The device
-record reads `connection_priority: ["LAN"]`.
+You do not need to configure anything for this — the AWS API accepts the
+same Ninja account login, so sign-in is unchanged. Full protocol notes
+are in [docs/AWS_API.md](docs/AWS_API.md).
+
+### Why this matters
+
+Once the phone app migrates a grill (it writes `Cloud_Mode = 1` to the
+grill's AWS device shadow), **that grill stops publishing telemetry to
+Ayla completely** — while Ayla carries on serving the last datapoint it
+ever received, forever, with no error and no staleness marker. An
+Ayla-only integration therefore shows a plausible, tidy, and entirely
+fictional idle grill.
+
+Measured on a migrated `OG900-EU`: **2367 consecutive Ayla polls across
+24 hours and two real cooks, zero changes.** Ayla reported
+`connection_status: Offline` and a `GET_GrillState` of `idle` whose
+`data_updated_at` was 24 hours old, while the AWS backend reported the
+same grill's true state updated seconds earlier. Ayla's entire 30-day
+datapoint history held five state datapoints, all written at
+module-connect time.
 
 Crucially, **the two directions fail independently**. The cloud still
 *delivers commands* to such a grill: on the measured unit, cook commands
@@ -72,9 +85,12 @@ Two consequences worth knowing:
   behaviour and the official app does the same, but it is worth knowing
   before you press Start on a grill that is switched off at the socket.
 
-Because this integration is a cloud poller, **it cannot see live state
-on a grill in that condition** — no polling interval changes that.
-What it does now is tell you so:
+### If neither backend has live state
+
+Some grills report to neither — the module publishes a snapshot when it
+connects and then goes quiet, serving live state only to LAN/BLE clients
+(see [docs/LOCAL_PROTOCOL.md](docs/LOCAL_PROTOCOL.md)). The integration
+detects that rather than inventing state:
 
 - entities that mirror grill state go **unavailable** instead of
   presenting a stale snapshot as current,

@@ -13,7 +13,7 @@ import pytest
 
 from nwf_lib.models import CombinedState, CookState, GrillState, ProbeState
 
-from .conftest import fixture_names, hydrate, load_fixture
+from .conftest import ayla_fixture_names, hydrate, load_fixture
 
 
 def _hydrate(name: str) -> CombinedState:
@@ -24,7 +24,7 @@ def _hydrate(name: str) -> CombinedState:
 
 # --------------------------------------------------------------- smoke tests
 
-@pytest.mark.parametrize("name", fixture_names())
+@pytest.mark.parametrize("name", ayla_fixture_names())
 def test_every_fixture_parses(name: str) -> None:
     """No fixture may fall back to the 'unknown'/empty parse."""
     fx = load_fixture(name)
@@ -34,7 +34,7 @@ def test_every_fixture_parses(name: str) -> None:
     assert len(state.probes.probes) == 2, f"{name}: expected 2 probes"
 
 
-@pytest.mark.parametrize("name", fixture_names())
+@pytest.mark.parametrize("name", ayla_fixture_names())
 def test_firmware_json_is_tab_indented(name: str) -> None:
     """Regression guard: the firmware ships pretty-printed JSON with tabs.
 
