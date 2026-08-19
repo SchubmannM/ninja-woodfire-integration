@@ -8,6 +8,13 @@
 
 > **Note:** This is primarily a Claude-assisted project.
 
+> **This is a maintained fork.** The original by
+> [@coxtor](https://github.com/coxtor/ninja-woodfire-integration) is no longer
+> being developed. This fork adds support for SharkNinja's AWS backend, which
+> grills are being migrated onto — without it, a migrated grill reports a
+> stale snapshot indefinitely and appears permanently idle. Install from this
+> repository, and open issues here rather than upstream.
+
 Home Assistant integration for the Ninja Woodfire Connect Pro XL
 outdoor grill. Connects via your Ninja Kitchen account; no local
 network access to the grill is required.
@@ -147,7 +154,7 @@ start failing — at which point you can extract a fresh set from
 your own phone:
 
 ```bash
-git clone https://github.com/coxtor/ninja-woodfire-integration
+git clone https://github.com/SchubmannM/ninja-woodfire-integration
 cd ninja-woodfire-integration
 python3 scripts/extract_credentials.py --region EU   # or NA
 ```
@@ -163,13 +170,13 @@ parsing an existing logfile.
 
 ## Status & support
 
-This is a personal hobby project published as-is. There is **no
-support, no warranty, no guarantee of fitness for any purpose**.
+A personal project published as-is. There is **no warranty and no
+guarantee of fitness for any purpose**.
 
-- Issues and pull requests may be ignored. The author has no
-  obligation to respond.
 - The integration depends on a third-party cloud that may change or
-  break it at any time without warning.
+  break it at any time without warning — and demonstrably does: grills
+  are being migrated from Ayla to an AWS backend mid-life, which is why
+  this fork exists.
 - Things that work today may not work tomorrow. Things that don't
   work may never work.
 - The maintainer makes no commitment to keep the project alive,
