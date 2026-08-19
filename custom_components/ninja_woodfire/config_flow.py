@@ -28,7 +28,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-def _user_schema(show_advanced: bool) -> vol.Schema:
+def _user_schema(show_overrides: bool) -> vol.Schema:
     """The sign-in form.
 
     Everyone gets account details and a region. The credential overrides are
@@ -37,10 +37,13 @@ def _user_schema(show_advanced: bool) -> vol.Schema:
     for everybody until a release goes out. Users can then extract fresh
     values with `scripts/extract_credentials.py` and paste them here.
 
-    That is rare enough, and obscure enough, that it belongs behind Home
-    Assistant's Advanced Mode rather than on the form every user sees when
-    setting up a barbecue. Leaving them off the standard form also means an
-    ordinary setup is never asked for something that looks like a secret.
+    They are shown only after a sign-in attempt has actually failed, which is
+    the one moment they are useful. Advanced Mode was tried as the gate first
+    and is not a good signal: plenty of people leave it on permanently for
+    unrelated reasons, and then every setup still asks for something that
+    looks like a secret and is almost never needed. A failed sign-in is both
+    precise and self-explaining — nothing is hidden from anyone who needs it,
+    and the cost when you do need it is one extra submit.
 
     Omitted fields simply fall back to the bundled defaults — see `_opt`.
     """
@@ -51,7 +54,7 @@ def _user_schema(show_advanced: bool) -> vol.Schema:
             list(REGION_DEFAULTS.keys())
         ),
     }
-    if show_advanced:
+    if show_overrides:
         schema.update(
             {
                 vol.Optional(CONF_AUTH0_AUDIENCE, default=""): str,
@@ -79,6 +82,8 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._user_input: dict[str, Any] | None = None
         self._devices: list[dict[str, Any]] = []
+        # Revealed once a sign-in attempt has failed — see _user_schema.
+        self._show_overrides: bool = False
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -105,12 +110,15 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._devices = await client.get_devices()
             except AuthError:
                 errors["base"] = "invalid_auth"
+                self._show_overrides = True
             except TransportError as err:
                 _LOGGER.warning("transport error: %s", err)
                 errors["base"] = "cannot_connect"
+                self._show_overrides = True
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("unexpected during login/get_devices")
                 errors["base"] = "unknown"
+                self._show_overrides = True
             else:
                 if not self._devices:
                     errors["base"] = "no_devices"
@@ -120,7 +128,7 @@ class NinjaWoodfireConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_user_schema(self.show_advanced_options),
+            data_schema=_user_schema(self._show_overrides),
             errors=errors,
         )
 

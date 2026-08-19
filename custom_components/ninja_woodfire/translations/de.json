@@ -27,7 +27,8 @@
       "invalid_auth": "Falsche E-Mail oder Passwort.",
       "cannot_connect": "Ninja-Cloud nicht erreichbar.",
       "no_devices": "Kein Grill in diesem Account gefunden.",
-      "unknown": "Unerwarteter Fehler."
+      "unknown": "Unerwarteter Fehler.",
+      "credentials_hint": "Anmeldung fehlgeschlagen. Falls die mitgelieferten App-Zugangsdaten nicht mehr funktionieren, kannst du sie über die erweiterten Felder unten überschreiben — siehe README für das Extraktor-Skript."
     },
     "abort": {
       "already_configured": "Dieser Grill ist bereits eingerichtet."

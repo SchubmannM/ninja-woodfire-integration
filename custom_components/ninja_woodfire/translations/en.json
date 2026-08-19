@@ -27,7 +27,8 @@
       "invalid_auth": "Invalid email or password.",
       "cannot_connect": "Cannot reach Ninja cloud.",
       "no_devices": "No grills found on this account.",
-      "unknown": "Unexpected error."
+      "unknown": "Unexpected error.",
+      "credentials_hint": "Sign-in failed. If the bundled app credentials have stopped working, the advanced fields below let you override them — see the project README for the extractor script."
     },
     "abort": {
       "already_configured": "This grill is already configured."

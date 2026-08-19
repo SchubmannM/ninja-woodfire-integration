@@ -283,13 +283,17 @@ def test_staged_settings_survive_an_unreadable_grill() -> None:
 
 # --------------------------------------------- config flow surface
 
-def test_credential_overrides_are_advanced_only() -> None:
-    """The four credential-override fields must not appear on the normal form.
+def test_credential_overrides_appear_only_after_a_failed_sign_in() -> None:
+    """The overrides must not be on the sign-in form users normally see.
 
-    They exist only for the rare case of SharkNinja rotating the bundled app
-    identifiers. Asking every user setting up a barbecue for an "app secret"
-    is noise at best and alarming at worst, so they live behind Home
-    Assistant's Advanced Mode.
+    They exist only for SharkNinja rotating the bundled app identifiers.
+    Asking everyone setting up a barbecue for an "app secret" is noise at best
+    and alarming at worst.
+
+    Home Assistant's Advanced Mode was tried as the gate and is not a good
+    signal — plenty of people leave it on permanently for unrelated reasons,
+    so the fields still showed for them. A failed sign-in is precise: it is
+    exactly when the overrides matter, and it explains itself.
 
     Checked against the source rather than by importing the module, which
     needs Home Assistant present.
@@ -300,24 +304,28 @@ def test_credential_overrides_are_advanced_only() -> None:
     root = pathlib.Path(__file__).resolve().parents[1]
     src = (root / "custom_components" / "ninja_woodfire" / "config_flow.py").read_text()
 
-    # The form must be built per-request from the advanced-mode flag, not a
-    # module-level constant that always carries every field.
-    assert "self.show_advanced_options" in src, (
-        "the sign-in form must respect Home Assistant's Advanced Mode"
+    # Every failure path must reveal them, or a user with rotated credentials
+    # is stuck with no way to enter working ones.
+    assert src.count("self._show_overrides = True") == 3, (
+        "each of invalid_auth / cannot_connect / unknown must reveal the overrides"
+    )
+    assert "_user_schema(self._show_overrides)" in src, (
+        "the form must be built from the failure flag alone; Advanced Mode is "
+        "not a good enough signal"
     )
 
     m = re.search(r"def _user_schema\(.*?\n    return vol\.Schema\(schema\)", src, re.S)
     assert m, "expected a _user_schema() builder"
     body = m.group(0)
-    base, _, advanced = body.partition("if show_advanced:")
-    assert advanced, "expected the overrides to be conditional"
+    base, _, revealed = body.partition("if show_overrides:")
+    assert revealed, "expected the overrides to be conditional"
 
     for field in ("CONF_AUTH0_AUDIENCE", "CONF_AUTH0_CLIENT_ID",
                   "CONF_AYLA_APP_ID", "CONF_AYLA_APP_SECRET",
                   "CONF_AWS_API_BASE", "CONF_AWS_API_KEY"):
-        assert field in advanced, f"{field} should be advanced-only"
-        assert field not in base, f"{field} must not be on the standard form"
+        assert field in revealed, f"{field} should only appear after a failure"
+        assert field not in base, f"{field} must not be on the first form"
 
-    # Account details obviously still are.
+    # Account details obviously always are.
     for field in ("CONF_EMAIL", "CONF_PASSWORD", "CONF_REGION"):
-        assert field in base, f"{field} must stay on the standard form"
+        assert field in base, f"{field} must stay on the first form"

@@ -147,9 +147,10 @@ author.
 
 ## Fallback: regenerating credentials
 
-> The four override fields are hidden unless **Advanced Mode** is enabled on
-> your Home Assistant user profile. You only need them if SharkNinja rotates
-> the app identifiers this integration bundles.
+> The override fields do not appear on the sign-in form until an attempt
+> actually fails — which is the only time they are useful. If sign-in works,
+> you never see them; if it stops working because SharkNinja rotated the app
+> identifiers, they are there on the retry.
 
 
 The integration ships with the per-region cloud identifiers used by
