@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from ._lib.models import ACTIVE_COOK_STATES
+
 DOMAIN = "ninja_woodfire"
 
 CONF_REGION = "region"
@@ -21,11 +23,25 @@ DEFAULT_SCAN_INTERVAL = SCAN_INTERVAL_IDLE         # initial; coordinator adapts
 MIN_SCAN_INTERVAL = timedelta(seconds=1)
 DEFAULT_REGION = "EU"
 
-# Cook states that should trigger fast polling.
-ACTIVE_STATES = frozenset(
-    {"preheat", "cooking", "cook", "rest", "resting", "flip", "get food",
-     "get_food", "lid open", "lid_open"}
-)
+# Cook states that should trigger fast polling. Re-exported from the
+# transport-agnostic layer so there is exactly one definition — the two
+# copies had already drifted apart (this one was missing "heat").
+ACTIVE_STATES = ACTIVE_COOK_STATES
+
+# How long the cloud's last-reported timestamp may lag before a snapshot
+# stops counting as a description of the grill right now. Entities that
+# mirror grill state go unavailable past this point rather than rendering
+# a stale snapshot as fact.
+#
+# Generous on purpose: the grill reports irregularly, and flapping
+# entities are worse than a slightly late one. Staleness *within* this
+# window is still visible on the "last reported" diagnostic sensor.
+STATE_MAX_AGE = timedelta(minutes=5)
+
+# The device record (which carries connection_status) is refreshed on its
+# own slower cadence — it is a second HTTP request, and connectivity does
+# not change between one-second property polls.
+DEVICE_META_INTERVAL = timedelta(seconds=30)
 
 # Cook-lifecycle events fired on the HA event bus. See coordinator
 # `_emit_lifecycle_events`. Automations subscribe via `event_type`.

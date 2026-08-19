@@ -16,6 +16,35 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# Canonical cook-phase vocabulary. The firmware reports phases in two
+# places with slightly different spellings (`GET_GrillState.state` and
+# `GET_CookState.state.state`), so both sets list every observed variant.
+#
+# This is the single source of truth: the HA layer re-exports ACTIVE_COOK_STATES
+# as `const.ACTIVE_STATES` rather than keeping a second copy, which previously
+# drifted (the HA copy lacked "heat", this one lacked "flip"/"lid open").
+ACTIVE_COOK_STATES = frozenset({
+    "start",
+    "preheat", "preheating",
+    "heat",
+    "cook", "cooking",
+    "rest", "resting",
+    "flip",
+    "get food", "get_food",
+    "lid open", "lid_open",
+})
+
+# States in which the grill is definitely not applying heat and has not been
+# for a while, so any chamber reading the cloud still serves is a leftover
+# from an earlier cook rather than a live measurement. Compared casefolded.
+#
+# "done" is deliberately absent: a just-finished cook leaves a genuinely hot
+# chamber, and suppressing that reading would be wrong.
+IDLE_COOK_STATES = frozenset({
+    "idle", "none", "powered off", "unknown", "",
+})
+
+
 def _parse_value(raw: Any) -> dict[str, Any]:
     """Ayla wraps the JSON state in a string. Tolerate both string + dict."""
     if isinstance(raw, dict):
@@ -242,30 +271,51 @@ class CombinedState:
     grill: GrillState = field(default_factory=GrillState)
     cook: CookState = field(default_factory=CookState)
     probes: ProbeState = field(default_factory=ProbeState)
+    # Whether the grill currently holds a session with the transport it was
+    # read through. Set by the transport — never assume it. For the Ayla cloud
+    # transport this mirrors the device record's `connection_status`, which is
+    # the only way to tell "idle grill" apart from "grill that has not spoken
+    # to the cloud since yesterday": the cloud keeps serving the last datapoint
+    # it ever received either way.
     online: bool = True
+    # Raw transport-reported status string, kept verbatim for diagnostics
+    # (Ayla: "Online" / "Offline").
+    connection_status: str | None = None
     # ISO-8601 timestamp from `property.data_updated_at` — when the grill
     # last reported any of these values. If older than ~60s the grill is
     # most likely off / in standby and the cached temps are stale.
     last_updated_at: Any = None  # datetime | None at runtime
 
-    def is_stale(self, max_age_seconds: int = 60) -> bool:
-        """True if the cloud's last-reported timestamp is too old to trust."""
+    def state_age_seconds(self) -> float | None:
+        """Seconds since the grill last reported, or None if unknown."""
         if self.last_updated_at is None:
-            return False  # be lenient if we can't tell
+            return None
         from datetime import datetime, timezone
-        age = (datetime.now(tz=timezone.utc) - self.last_updated_at).total_seconds()
+        return (datetime.now(tz=timezone.utc) - self.last_updated_at).total_seconds()
+
+    def is_stale(self, max_age_seconds: int = 60) -> bool:
+        """True if the transport's last-reported timestamp is too old to trust."""
+        age = self.state_age_seconds()
+        if age is None:
+            return False  # be lenient if we can't tell
         return age > max_age_seconds
+
+    def is_live(self, max_age_seconds: int = 300) -> bool:
+        """Whether this snapshot describes the grill *now*.
+
+        Both halves matter. An offline grill is not live no matter how recent
+        its last datapoint looks, and a grill that is nominally connected but
+        has not reported for minutes is not live either — the OG900-EU pushes
+        a snapshot when its Wi-Fi module connects and then goes quiet, so a
+        "connected" flag on its own says nothing about freshness.
+        """
+        return self.online and not self.is_stale(max_age_seconds)
 
     # Modes that exercise each chamber sensor. Outside this set the
     # cloud may keep returning a (stale or noisy) value but the
     # chamber isn't being used — better to hide than to mislead.
     _AIR_TEMP_MODES = frozenset({
         "air crisp", "bake", "roast", "reheat", "dehydrate",
-    })
-
-    _ACTIVE_PHASES = frozenset({
-        "preheat", "preheating", "heat",
-        "cooking", "cook", "rest", "resting",
     })
 
     def temp_is_plausible(self, value: float, name: str = "grill") -> bool:
@@ -280,14 +330,21 @@ class CombinedState:
         """
         if value is None:
             return False
+        # An offline grill cannot be reporting a live temperature, however
+        # plausible the cached number looks.
+        if not self.online:
+            return False
         if self.is_stale():
             return False
-        # Idle grill: stale cache from the last cook session keeps
-        # leaking — anything above ambient is implausible.
-        if self.grill.state == "idle" and value > 50:
+        # Not-cooking grill: stale cache from the last cook session keeps
+        # leaking — anything above ambient is implausible. Matched against
+        # every non-heating state, not just "idle": the firmware also reports
+        # "powered OFF" (control panel off, module still up) and served a
+        # leftover 82 °C chamber reading in that state in real captures.
+        if self.grill.state.strip().casefold() in IDLE_COOK_STATES and value > 50:
             return False
         # Active cook: gate sensors by which chamber is in play.
-        if self.grill.state in self._ACTIVE_PHASES:
+        if self.grill.state in ACTIVE_COOK_STATES:
             mode = self.grill.mode
             if name == "smoke" and not self.grill.smoke:
                 return False

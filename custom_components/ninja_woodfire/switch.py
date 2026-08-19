@@ -152,6 +152,10 @@ async def async_setup_entry(
 
 
 class NinjaSwitch(NinjaWoodfireEntity, SwitchEntity):
+    # Staged cook settings live in the coordinator, not on the grill,
+    # so they stay editable while the grill is offline.
+    _requires_live_state = False
+
     entity_description: NinjaSwitchDescription
 
     def __init__(

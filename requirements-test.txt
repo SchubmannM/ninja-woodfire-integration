@@ -1,0 +1,4 @@
+# Unit-test dependencies. The tests exercise the transport/parsing layer
+# (custom_components/ninja_woodfire/_lib) only — Home Assistant is not needed.
+pytest>=8.0
+aiohttp>=3.9

@@ -38,6 +38,10 @@ async def async_setup_entry(
 
 
 class CookDurationNumber(NinjaWoodfireEntity, NumberEntity):
+    # Staged cook settings live in the coordinator, not on the grill,
+    # so they stay editable while the grill is offline.
+    _requires_live_state = False
+
     _attr_translation_key = "cook_duration"
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_native_min_value = 1
@@ -84,6 +88,10 @@ class CookTempNumber(NinjaWoodfireEntity, NumberEntity):
       grill mode (heat-level)  → 1..3, no unit
       celsius modes            → mode-specific min/max, °C
     """
+    # Staged cook settings live in the coordinator, not on the grill,
+    # so they stay editable while the grill is offline.
+    _requires_live_state = False
+
 
     _attr_translation_key = "cook_temp"
     _attr_mode = NumberMode.BOX
@@ -146,6 +154,10 @@ class ProbeSetpointNumber(NinjaWoodfireEntity, NumberEntity):
     Companion switch ('Probe N target enabled') controls whether the cook
     is sent with this probe targeting at all.
     """
+    # Staged cook settings live in the coordinator, not on the grill,
+    # so they stay editable while the grill is offline.
+    _requires_live_state = False
+
 
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_native_min_value = 30

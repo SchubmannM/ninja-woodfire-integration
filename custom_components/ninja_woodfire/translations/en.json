@@ -56,14 +56,17 @@
       "message": { "name": "Message" },
       "firmware_version": { "name": "Firmware version" },
       "oem_model": { "name": "Model" },
-      "dsn": { "name": "Device serial (DSN)" }
+      "dsn": { "name": "Device serial (DSN)" },
+      "preheat_progress": { "name": "Preheat progress" },
+      "last_report": { "name": "Last cloud report" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Lid" },
       "probe0_plugged_in": { "name": "Probe 1 connected" },
       "probe1_plugged_in": { "name": "Probe 2 connected" },
       "probe0_active": { "name": "Probe 1 active" },
-      "probe1_active": { "name": "Probe 2 active" }
+      "probe1_active": { "name": "Probe 2 active" },
+      "cloud_connected": { "name": "Cloud connected" }
     },
     "select": {
       "cook_mode": { "name": "Cook mode" }

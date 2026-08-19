@@ -12,6 +12,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from ._lib.models import CombinedState
@@ -64,7 +65,11 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(NinjaBinarySensor(coordinator, desc) for desc in BINARY_SENSORS)
+    entities: list[BinarySensorEntity] = [
+        NinjaBinarySensor(coordinator, desc) for desc in BINARY_SENSORS
+    ]
+    entities.append(NinjaConnectivitySensor(coordinator))
+    async_add_entities(entities)
 
 
 class NinjaBinarySensor(NinjaWoodfireEntity, BinarySensorEntity):
@@ -84,3 +89,40 @@ class NinjaBinarySensor(NinjaWoodfireEntity, BinarySensorEntity):
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
+
+
+class NinjaConnectivitySensor(NinjaWoodfireEntity, BinarySensorEntity):
+    """Whether the grill currently has a session with the cloud.
+
+    Deliberately the one entity that stays available when everything else
+    goes away — it is how the user tells "my grill is not reachable" apart
+    from "the integration is broken". Every other state entity is
+    unavailable in exactly that situation.
+    """
+
+    _requires_live_state = False
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "cloud_connected"
+
+    def __init__(self, coordinator: NinjaWoodfireCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dsn}_cloud_connected"
+
+    @property
+    def is_on(self) -> bool | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.online
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        state = self.coordinator.data
+        if state is None:
+            return None
+        age = state.state_age_seconds()
+        return {
+            "connection_status": state.connection_status,
+            "last_report_age_seconds": None if age is None else int(age),
+            "state_is_live": self.coordinator.state_is_live,
+        }

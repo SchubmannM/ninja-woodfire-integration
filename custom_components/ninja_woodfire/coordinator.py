@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -13,6 +15,7 @@ from ._lib.models import CombinedState
 from .const import (
     ACTIVE_STATES,
     DEFAULT_SCAN_INTERVAL,
+    DEVICE_META_INTERVAL,
     DOMAIN,
     EVENT_COOK_DONE,
     EVENT_COOK_HALFTIME,
@@ -22,6 +25,7 @@ from .const import (
     EVENT_PROBE_TARGET_REACHED,
     SCAN_INTERVAL_ACTIVE,
     SCAN_INTERVAL_IDLE,
+    STATE_MAX_AGE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,20 +70,35 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         # Lifecycle-event tracking — one-shot flags reset on each cook.
         self._prev_grill_state: str | None = None
         self._prev_cook_state: str | None = None
+        # Cached device record (carries connection_status), refreshed on its
+        # own slower cadence than the property poll.
+        self._device_meta: dict[str, Any] | None = None
+        self._device_meta_at: datetime | None = None
+        # Latches so the connectivity diagnosis is logged on transition only,
+        # not once per poll.
+        self._logged_offline: bool = False
+        self._logged_frozen: bool = False
         self._halftime_fired: bool = False
         self._probe_target_fired: dict[int, bool] = {0: False, 1: False}
         self._probe_halfway_fired: dict[int, bool] = {0: False, 1: False}
 
     async def _async_update_data(self) -> CombinedState:
         try:
-            state = await self.client.get_combined_state(self.dsn)
+            device = await self._device_metadata()
+            state = await self.client.get_combined_state(self.dsn, device=device)
         except AuthError as err:
             raise UpdateFailed(f"auth: {err}") from err
         except TransportError as err:
             raise UpdateFailed(f"transport: {err}") from err
+
+        self._diagnose_liveness(state)
+
         active = (
-            state.grill.state in ACTIVE_STATES
-            or state.cook.state in ACTIVE_STATES
+            state.is_live(int(STATE_MAX_AGE.total_seconds()))
+            and (
+                state.grill.state in ACTIVE_STATES
+                or state.cook.state in ACTIVE_STATES
+            )
         )
         new_interval = SCAN_INTERVAL_ACTIVE if active else SCAN_INTERVAL_IDLE
         if self.update_interval != new_interval:
@@ -92,6 +111,82 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         self._emit_lifecycle_events(state)
         return state
 
+    async def _device_metadata(self) -> dict[str, Any] | None:
+        """The cached device record, refreshed at most every DEVICE_META_INTERVAL.
+
+        Its `connection_status` is what makes an "idle" snapshot
+        interpretable, so a failure to refresh must not silently fall back to
+        the optimistic default — we keep serving the last record we have and
+        only return None if we have never managed to fetch one.
+        """
+        now = datetime.now(tz=timezone.utc)
+        fresh = (
+            self._device_meta is not None
+            and self._device_meta_at is not None
+            and (now - self._device_meta_at) < DEVICE_META_INTERVAL
+        )
+        if fresh:
+            return self._device_meta
+        try:
+            self._device_meta = await self.client.get_device(self.dsn)
+            self._device_meta_at = now
+        except (AuthError, TransportError) as err:
+            _LOGGER.debug(
+                "ninja_woodfire %s: device metadata refresh failed (%s); "
+                "reusing last known record", self.dsn, err,
+            )
+        return self._device_meta
+
+    def _diagnose_liveness(self, state: CombinedState) -> None:
+        """Log *why* there is no live data, once per transition.
+
+        This grill is a cloud-reporting outlier: the Wi-Fi module pushes a
+        state snapshot when it connects and then goes quiet, serving live
+        state only to LAN/BLE clients. The cloud keeps returning that one
+        snapshot forever, so without this the integration looks like it is
+        working — it reports a plausible "idle" grill that is actually
+        mid-cook. See README § Known limitations.
+        """
+        age = state.state_age_seconds()
+        age_txt = "unknown" if age is None else f"{age / 60:.0f} min"
+
+        if not state.online:
+            if not self._logged_offline:
+                _LOGGER.warning(
+                    "ninja_woodfire %s: grill is not connected to the cloud "
+                    "(connection_status=%s); its last report is %s old. "
+                    "Entities are unavailable rather than showing that stale "
+                    "snapshot as current state.",
+                    self.dsn, state.connection_status, age_txt,
+                )
+                self._logged_offline = True
+            self._logged_frozen = False
+            return
+        self._logged_offline = False
+
+        if state.is_stale(int(STATE_MAX_AGE.total_seconds())):
+            if not self._logged_frozen:
+                _LOGGER.warning(
+                    "ninja_woodfire %s: grill reports connected but has not "
+                    "sent an update for %s. The cloud is serving a cached "
+                    "snapshot (state=%s), so entities are unavailable. This "
+                    "grill only streams live state to LAN/BLE clients.",
+                    self.dsn, age_txt, state.grill.state,
+                )
+                self._logged_frozen = True
+            return
+        self._logged_frozen = False
+
+    @property
+    def state_is_live(self) -> bool:
+        """Whether the last snapshot describes the grill right now.
+
+        Entities that mirror grill state gate their availability on this.
+        """
+        return self.data is not None and self.data.is_live(
+            int(STATE_MAX_AGE.total_seconds())
+        )
+
     def _emit_lifecycle_events(self, state: CombinedState) -> None:
         """Fire HA events on cook-lifecycle transitions.
 
@@ -99,6 +194,15 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         snapshot and fires an event for each transition we care about.
         Automations subscribe via `event_type` (see const.EVENT_*).
         """
+        # A stale or offline snapshot is not evidence of a transition. Without
+        # this guard, a grill dropping off the cloud mid-cook would leave the
+        # last-seen state frozen and then fire a bogus "cook done" the moment
+        # it reconnected showing "idle".
+        if not state.is_live(int(STATE_MAX_AGE.total_seconds())):
+            self._prev_grill_state = None
+            self._prev_cook_state = None
+            return
+
         prev_grill = self._prev_grill_state
         prev_cook = self._prev_cook_state
         new_grill = state.grill.state
@@ -340,7 +444,13 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
 
     @property
     def is_cook_active(self) -> bool:
-        return self.data is not None and self.data.grill.state in ACTIVE_STATES
+        """Whether a cook is running *right now*.
+
+        Requires a live snapshot: a cached "cooking" state from a grill that
+        has since gone offline must not make the live_or_staged_* accessors
+        report a phantom cook.
+        """
+        return self.state_is_live and self.data.grill.state in ACTIVE_STATES
 
     @property
     def live_or_staged_mode(self) -> str:

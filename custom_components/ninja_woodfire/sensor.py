@@ -147,6 +147,9 @@ def _plausible_probe_temp(state: CombinedState, idx: int) -> float | None:
     """
     if idx >= len(state.probes.probes):
         return None
+    # An offline grill's probe reading is a cached value, not a measurement.
+    if not state.online:
+        return None
     probe = state.probes.probes[idx]
     if not probe.plugged_in:
         return None
@@ -401,6 +404,7 @@ async def async_setup_entry(
     coordinator: NinjaWoodfireCoordinator = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = [NinjaSensor(coordinator, desc) for desc in SENSORS]
     entities.extend(NinjaDiagnosticSensor(coordinator, desc) for desc in DIAGNOSTICS)
+    entities.append(NinjaLastReportSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -445,6 +449,8 @@ class NinjaSensor(NinjaWoodfireEntity, SensorEntity):
 class NinjaDiagnosticSensor(NinjaWoodfireEntity, SensorEntity):
     """Static-info sensor (firmware version, model, etc.) — populated once at setup."""
 
+    # Device metadata, not grill state — still true while the grill is away.
+    _requires_live_state = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
@@ -463,3 +469,40 @@ class NinjaDiagnosticSensor(NinjaWoodfireEntity, SensorEntity):
         if self._info_key == "dsn":
             return self.coordinator.dsn
         return self.coordinator.device_info_extra.get(self._info_key) or None
+
+
+class NinjaLastReportSensor(NinjaWoodfireEntity, SensorEntity):
+    """When the grill last reported anything to the cloud.
+
+    The sensor that would have made the original bug obvious in seconds: it
+    reads "yesterday 19:25" while the grill is mid-cook. Stays available when
+    the state entities do not, because its whole purpose is to quantify how
+    far behind the cloud copy is.
+    """
+
+    _requires_live_state = False
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "last_report"
+    _attr_icon = "mdi:cloud-clock-outline"
+
+    def __init__(self, coordinator: NinjaWoodfireCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dsn}_last_report"
+
+    @property
+    def native_value(self) -> Any:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.last_updated_at
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        state = self.coordinator.data
+        if state is None:
+            return None
+        age = state.state_age_seconds()
+        return {
+            "age_seconds": None if age is None else int(age),
+            "state_is_live": self.coordinator.state_is_live,
+        }

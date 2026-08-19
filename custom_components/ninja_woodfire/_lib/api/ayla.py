@@ -165,6 +165,34 @@ class AylaCloudClient:
                 raise TransportError(f"get_devices {r.status}: {await r.text()}")
             return self._unwrap_list(await r.json(), "device")
 
+    async def get_device(self, dsn: str) -> dict[str, Any]:
+        """Fetch one device's record.
+
+        `connection_status` in here is the only signal that distinguishes a
+        genuinely idle grill from one that has not contacted the cloud in
+        hours: `properties.json` serves the last datapoint the grill ever
+        pushed either way, with no indication that it is ancient.
+        """
+        token = await self._ensure_session()
+        url = f"{self._region.ayla_device_base}/apiv1/dsns/{dsn}.json"
+        async with self._client().get(url, headers=self._auth_headers(token)) as r:
+            if r.status == 401:
+                await self._refresh()
+                token = await self._ensure_session()
+                async with self._client().get(
+                    url, headers=self._auth_headers(token)
+                ) as r2:
+                    if r2.status != 200:
+                        raise TransportError(f"get_device {r2.status}: {await r2.text()}")
+                    payload = await r2.json()
+            elif r.status != 200:
+                raise TransportError(f"get_device {r.status}: {await r.text()}")
+            else:
+                payload = await r.json()
+        if isinstance(payload, dict) and "device" in payload:
+            return payload["device"]
+        return payload if isinstance(payload, dict) else {}
+
     async def get_properties(
         self, dsn: str, names: list[str] | None = None
     ) -> list[dict[str, Any]]:
@@ -180,8 +208,17 @@ class AylaCloudClient:
                 raise TransportError(f"get_properties {r.status}: {await r.text()}")
             return self._unwrap_list(await r.json(), "property")
 
-    async def get_combined_state(self, dsn: str) -> CombinedState:
-        """Read GET_GrillState + GET_CookState + GET_ProbeState in one round-trip."""
+    async def get_combined_state(
+        self, dsn: str, *, device: dict[str, Any] | None = None
+    ) -> CombinedState:
+        """Read GET_GrillState + GET_CookState + GET_ProbeState in one round-trip.
+
+        Pass `device` (from `get_device`) to populate the connectivity fields.
+        Without it the snapshot cannot say whether the values are live, so
+        `online` keeps its optimistic default and callers must not treat the
+        contents as current. Callers are expected to cache the device record
+        and refresh it on a slower cadence than the property poll.
+        """
         from datetime import datetime, timezone
 
         props = await self.get_properties(dsn, names=ALL_READ_PROPERTIES)
@@ -191,9 +228,11 @@ class AylaCloudClient:
             name = p.get("name")
             value = p.get("value")
             # data_updated_at is the firmware's last-report timestamp.
-            # Used for staleness/plausibility checks downstream.
+            # Used for staleness/plausibility checks downstream. Ayla sends
+            # the literal string "null" for properties the device has never
+            # reported, so guard on more than truthiness.
             updated_at_raw = p.get("data_updated_at")
-            if updated_at_raw:
+            if isinstance(updated_at_raw, str) and updated_at_raw not in ("", "null"):
                 try:
                     ts = datetime.fromisoformat(updated_at_raw.replace("Z", "+00:00"))
                     if latest_update is None or ts > latest_update:
@@ -207,6 +246,10 @@ class AylaCloudClient:
             elif name == PROP_PROBE_STATE:
                 state.probes = ProbeState.from_property_value(value)
         state.last_updated_at = latest_update
+        if device is not None:
+            status = device.get("connection_status")
+            state.connection_status = status
+            state.online = str(status).strip().casefold() == "online"
         return state
 
     async def set_property_datapoint(

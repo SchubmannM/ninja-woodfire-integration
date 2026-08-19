@@ -57,14 +57,16 @@
       "message": { "name": "Nachricht" },
       "firmware_version": { "name": "Firmware-Version" },
       "oem_model": { "name": "Modell" },
-      "dsn": { "name": "Geräte-Seriennr. (DSN)" }
+      "dsn": { "name": "Geräte-Seriennr. (DSN)" },
+      "last_report": { "name": "Letzte Cloud-Meldung" }
     },
     "binary_sensor": {
       "lid_open": { "name": "Deckel" },
       "probe0_plugged_in": { "name": "Sonde 1 angeschlossen" },
       "probe1_plugged_in": { "name": "Sonde 2 angeschlossen" },
       "probe0_active": { "name": "Sonde 1 aktiv" },
-      "probe1_active": { "name": "Sonde 2 aktiv" }
+      "probe1_active": { "name": "Sonde 2 aktiv" },
+      "cloud_connected": { "name": "Cloud verbunden" }
     },
     "select": {
       "cook_mode": { "name": "Kochmodus" }

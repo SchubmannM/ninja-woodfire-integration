@@ -7,6 +7,9 @@ __pycache__/
 .DS_Store
 *.log
 
+# Local credentials for diagnostics against a real grill, never commit.
+.env
+
 # Extractor output — contains app credentials, never commit.
 ninja_woodfire_credentials.txt
 *.creds.txt
