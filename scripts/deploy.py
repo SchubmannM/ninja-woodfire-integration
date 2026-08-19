@@ -88,6 +88,85 @@ def run(*args: str, check: bool = True) -> str:
     return proc.stdout.strip()
 
 
+def hacs_refresh(url: str, token: str, wanted: str) -> str | None:
+    """Make HACS re-read the repository, and report the version it then sees.
+
+    HACS caches a repository's release list. `homeassistant.update_entity`
+    refreshes the *entity* from that cache, so a release published seconds ago
+    stays invisible — the update entity cheerfully reports "no update pending"
+    and a deploy restarts Home Assistant onto the code it was already running.
+    This is the "Update information" button in the HACS UI.
+
+    Only reachable over Home Assistant's websocket API: modern HACS registers
+    no services, so there is nothing for REST to call. That needs aiohttp,
+    which the test/dev environment already has. Without it the deploy still
+    works — the refresh just has to be done by hand — so this degrades to a
+    message rather than an error.
+
+    Returns the version HACS reports as available afterwards, or None if the
+    refresh could not be performed.
+    """
+    try:
+        import asyncio
+
+        import aiohttp
+    except ImportError:
+        print("    aiohttp not available, so HACS cannot be refreshed from here.")
+        print("    If the version below looks stale: HACS -> Ninja Woodfire ->")
+        print("    three-dot menu -> 'Update information'.")
+        return None
+
+    ws_url = url.replace("https://", "wss://").replace("http://", "ws://")
+
+    async def _run() -> str | None:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(f"{ws_url}/api/websocket", timeout=30) as ws:
+                await ws.receive_json()
+                await ws.send_json({"type": "auth", "access_token": token})
+                if (await ws.receive_json()).get("type") != "auth_ok":
+                    raise RuntimeError("websocket auth rejected")
+
+                msg_id = 0
+
+                async def call(payload: dict) -> dict:
+                    nonlocal msg_id
+                    msg_id += 1
+                    await ws.send_json({"id": msg_id, **payload})
+                    return await asyncio.wait_for(ws.receive_json(), timeout=60)
+
+                listing = await call({"type": "hacs/repositories/list"})
+                repos = listing.get("result") or []
+                match = next(
+                    (r for r in repos if str(r.get("full_name", "")).lower() == REPO.lower()),
+                    None,
+                )
+                if match is None:
+                    print(f"    {REPO} is not installed through HACS")
+                    return None
+
+                await call({"type": "hacs/repository/refresh",
+                            "repository": str(match.get("id"))})
+
+                # The refresh is asynchronous; give it a moment to land.
+                for _ in range(10):
+                    await asyncio.sleep(2)
+                    listing = await call({"type": "hacs/repositories/list"})
+                    for r in listing.get("result") or []:
+                        if str(r.get("id")) == str(match.get("id")):
+                            available = r.get("available_version")
+                            if available == wanted:
+                                return available
+                            latest = available
+                            break
+                return latest
+
+    try:
+        return asyncio.run(_run())
+    except Exception as err:  # noqa: BLE001 - best effort, never fatal
+        print(f"    could not refresh HACS ({type(err).__name__}: {err})")
+        return None
+
+
 class HA:
     def __init__(self, url: str, token: str, dry_run: bool) -> None:
         self.url = url
@@ -216,7 +295,23 @@ def main() -> int:
             print(f"    published release {tag}")
 
     if not args.restart_only:
-        print("==> asking HACS for the new version")
+        print("==> asking HACS to re-read the repository")
+        if args.dry_run:
+            print(f"    [dry-run] would refresh HACS and wait for {tag}")
+        else:
+            seen = hacs_refresh(url, token, tag)
+            if seen is not None:
+                print(f"    HACS now sees {seen}")
+                if seen != tag:
+                    print(
+                        f"    that is not {tag}. Restarting now would just reload the "
+                        f"code already running, so stopping here.\n"
+                        f"    Try: HACS -> Ninja Woodfire -> three-dot menu ->\n"
+                        f"    'Update information', then run this again."
+                    )
+                    return 1
+
+        print("==> installing")
         entity = ha.find_update_entity()
         if entity is None:
             print("    no HACS update entity found for this integration.")
@@ -236,10 +331,11 @@ def main() -> int:
                     ha.service("update", "install", entity_id=entity)
                 elif looks_like_commit(installed) or looks_like_commit(latest):
                     print(f"    HACS is tracking the branch by commit, not releases,")
-                    print(f"    so it cannot see {tag}. This repo had no releases until")
-                    print(f"    now, and HACS caches that. To switch it over: HACS ->")
-                    print(f"    Ninja Woodfire -> the three-dot menu -> 'Update")
-                    print(f"    information', then run this again. Restarting anyway.")
+                    print(f"    so it cannot see {tag}. Not restarting, since that")
+                    print(f"    would reload the code already running.")
+                    return 1
+                elif installed == tag:
+                    print(f"    already on {tag}")
                 else:
                     print("    HACS reports no update pending")
             else:

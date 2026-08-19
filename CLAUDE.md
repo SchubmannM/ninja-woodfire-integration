@@ -43,6 +43,12 @@ never fires and you get `command not found: python`:
 echo 'eval "$(mise activate zsh)"' >> ~/.zshrc && exec zsh
 ```
 
+Tasks address `.venv/bin/...` explicitly rather than relying on PATH. mise
+creates the venv with `uv`, which does not put `pip` inside it, so a bare `pip`
+falls through to the next interpreter on PATH and installs somewhere else
+entirely — leaving the venv empty while everything still appears to work,
+against the wrong Python.
+
 Without mise, the equivalent is a `.venv` plus `requirements-test.txt` and
 `pre-commit install` — but then nothing pins the interpreter, and it is easy to
 develop on a Python newer than the runtime and ship syntax that fails there.

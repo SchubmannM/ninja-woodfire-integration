@@ -20,24 +20,30 @@ _.python.venv = { path = ".venv", create = true }
 
 [tasks.install]
 description = "Install test dependencies and the git hooks"
+# `uv pip`, not bare `pip`: mise creates .venv with uv, which does not install
+# pip into it. A bare `pip` then falls through PATH to whatever interpreter is
+# next — silently installing into the system Python while the venv stays empty,
+# so `mise run test` ends up running against an interpreter that is not the
+# pinned one. `--python` pins the target explicitly rather than trusting the
+# ambient VIRTUAL_ENV.
 run = [
-  "pip install --quiet --upgrade pip",
-  "pip install --quiet -r requirements-test.txt",
-  "pre-commit install",
+  "uv pip install --python .venv/bin/python -r requirements-test.txt",
+  "uv pip install --python .venv/bin/python pre-commit",
+  ".venv/bin/pre-commit install",
 ]
 
 [tasks.test]
 description = "Run the test suite (no Home Assistant required)"
-run = "pytest -q"
+run = ".venv/bin/pytest -q"
 
 [tasks.check]
 description = "Everything the pre-commit hooks check, across all files"
-run = "pre-commit run --all-files"
+run = ".venv/bin/pre-commit run --all-files"
 
 [tasks.compile]
 description = "Syntax-check the integration without importing Home Assistant"
-run = "python -m compileall -q custom_components/ninja_woodfire"
+run = ".venv/bin/python -m compileall -q custom_components/ninja_woodfire"
 
 [tasks.deploy]
 description = "Release the current version and roll it out to Home Assistant"
-run = "python scripts/deploy.py"
+run = ".venv/bin/python scripts/deploy.py"
