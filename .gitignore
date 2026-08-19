@@ -13,3 +13,6 @@ __pycache__/
 # Extractor output — contains app credentials, never commit.
 ninja_woodfire_credentials.txt
 *.creds.txt
+
+# Deploy target + long-lived HA token, never commit.
+.env.deploy

@@ -28,7 +28,11 @@ pre-commit run --all-files          # everything the hooks check
 ```
 
 Deploying to a real HA instance is still the only way to exercise the entity
-layer:
+layer. HA cannot hot-reload a custom integration — the old modules stay
+imported, so a restart is always required. `scripts/deploy.py` automates the
+whole loop (tag → GitHub release → HACS install → restart → wait) against a
+Home Assistant OS instance over its REST API; it needs `.env.deploy` with
+`HA_URL` and `HA_TOKEN`. For a filesystem-accessible instance:
 
 ```bash
 cp -r custom_components/ninja_woodfire <ha-config>/custom_components/

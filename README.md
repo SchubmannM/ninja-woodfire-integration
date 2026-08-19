@@ -173,6 +173,31 @@ integration's *advanced* config-flow fields, then delete the file.
 `scripts/extract_credentials.py --help` for options including
 parsing an existing logfile.
 
+## Deploying a change
+
+Home Assistant cannot hot-reload a custom integration. HACS downloads new
+files fine, but Python has already imported the old modules, so reloading
+the config entry re-runs setup against the *old* code — only a restart
+picks changes up. `scripts/deploy.py` doesn't remove the restart, it
+removes the clicking:
+
+```bash
+# once: HA profile -> Security -> Long-lived access tokens
+cat > .env.deploy <<'EOF'
+HA_URL=https://your-ha-host
+HA_TOKEN=<token>
+EOF
+
+python3 scripts/deploy.py              # tag + release + HACS update + restart
+python3 scripts/deploy.py --restart-only
+python3 scripts/deploy.py --dry-run
+```
+
+It tags the version in `manifest.json`, publishes a GitHub release (which
+is what makes HACS offer a versioned update rather than tracking the
+branch), tells HACS to install it, restarts HA, and waits for it to come
+back. `.env.deploy` is gitignored.
+
 ## Status & support
 
 A personal project published as-is. There is **no warranty and no
