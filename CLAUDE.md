@@ -20,12 +20,26 @@ OG9-series models are bundled but unverified.
 still testable without it, because everything under `_lib/` is deliberately free
 of Home Assistant imports.
 
+The toolchain is pinned with [mise](https://mise.jdx.dev). `mise.toml` fixes
+Python to the version Home Assistant itself ships (3.14 as of HA 2026.3) and
+auto-creates `.venv` on `cd`, so the interpreter you develop against is the one
+the integration will actually run on:
+
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements-test.txt
-.venv/bin/python -m pytest          # 51 tests, ~0.1s, no HA needed
-python3 -m compileall -q custom_components/ninja_woodfire   # syntax check
-pre-commit run --all-files          # everything the hooks check
+mise install       # fetch the pinned Python, create .venv
+mise run install   # test deps + git hooks
+mise run test      # 53 tests, ~2s, no HA needed
+mise run check     # everything the pre-commit hooks check
+mise run compile   # syntax check without importing HA
+mise run deploy    # release + roll out to HA (see below)
 ```
+
+Without mise, the equivalent is a `.venv` plus `requirements-test.txt` and
+`pre-commit install` — but then nothing pins the interpreter, and it is easy to
+develop on a Python newer than the runtime and ship syntax that fails there.
+Note the floor is lower than the ceiling: `hacs.json` declares a minimum of HA
+2024.12, which ran Python 3.12, so avoid post-3.12 syntax unless that minimum
+moves too.
 
 Deploying to a real HA instance is still the only way to exercise the entity
 layer. HA cannot hot-reload a custom integration — the old modules stay

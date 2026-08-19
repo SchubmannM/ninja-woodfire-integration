@@ -1,0 +1,43 @@
+# Toolchain for this repo — `mise install` sets it up.
+#
+# Pinned to match what Home Assistant actually runs, not just "some modern
+# Python". Developing on a newer interpreter than the runtime is a quiet way to
+# ship syntax that works locally and fails on the target.
+
+[tools]
+# Home Assistant 2026.3 ships on Python 3.14 and supports a single minor
+# version at a time, tracking the latest upstream release.
+#
+# Note the floor is lower than the ceiling: hacs.json declares a minimum of
+# Home Assistant 2024.12, which ran Python 3.12. So develop on 3.14, but avoid
+# syntax newer than 3.12 unless that minimum is raised too.
+python = "3.14"
+
+[env]
+# Auto-created and activated on `cd` into the repo, so `pytest` and
+# `pre-commit` resolve without remembering to source anything.
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.install]
+description = "Install test dependencies and the git hooks"
+run = [
+  "pip install --quiet --upgrade pip",
+  "pip install --quiet -r requirements-test.txt",
+  "pre-commit install",
+]
+
+[tasks.test]
+description = "Run the test suite (no Home Assistant required)"
+run = "pytest -q"
+
+[tasks.check]
+description = "Everything the pre-commit hooks check, across all files"
+run = "pre-commit run --all-files"
+
+[tasks.compile]
+description = "Syntax-check the integration without importing Home Assistant"
+run = "python -m compileall -q custom_components/ninja_woodfire"
+
+[tasks.deploy]
+description = "Release the current version and roll it out to Home Assistant"
+run = "python scripts/deploy.py"

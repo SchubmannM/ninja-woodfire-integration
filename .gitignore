@@ -16,3 +16,6 @@ ninja_woodfire_credentials.txt
 
 # Deploy target + long-lived HA token, never commit.
 .env.deploy
+
+# mise-managed virtualenv
+.venv/

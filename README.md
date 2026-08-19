@@ -173,6 +173,18 @@ integration's *advanced* config-flow fields, then delete the file.
 `scripts/extract_credentials.py --help` for options including
 parsing an existing logfile.
 
+## Development
+
+The toolchain is pinned with [mise](https://mise.jdx.dev), to the Python
+version Home Assistant itself ships:
+
+```bash
+mise install       # pinned Python + .venv
+mise run install   # test dependencies and git hooks
+mise run test      # the test suite — no Home Assistant needed
+mise run check     # everything the pre-commit hooks check
+```
+
 ## Deploying a change
 
 Home Assistant cannot hot-reload a custom integration. HACS downloads new
