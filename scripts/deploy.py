@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -68,6 +69,16 @@ def load_env() -> tuple[str, str]:
     if missing:
         sys.exit(f"{ENV_FILE.name} is missing: {', '.join(sorted(missing))}")
     return env["HA_URL"].rstrip("/"), env["HA_TOKEN"]
+
+
+def looks_like_commit(value: object) -> bool:
+    """Is this a git SHA rather than a version?
+
+    HACS reports a commit when it is tracking a branch, and a version string
+    when it is tracking releases. Telling them apart is how we know a
+    just-published release is not going to be seen.
+    """
+    return bool(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{7,40}", value))
 
 
 def run(*args: str, check: bool = True) -> str:
@@ -120,6 +131,32 @@ class HA:
                 return eid
         return None
 
+    def restart(self) -> None:
+        """Ask Home Assistant to restart, tolerating the missing reply.
+
+        HA tears down its HTTP server as part of restarting, so the response to
+        this call usually never arrives: directly you get a dropped connection,
+        behind a reverse proxy you get a 502 or 504. That is success, not
+        failure — the only way to know is to poll until it answers again.
+
+        A 4xx is different and still fatal: that is a bad token or a bad URL,
+        and no amount of waiting fixes it.
+        """
+        if self.dry_run:
+            print("    [dry-run] homeassistant.restart")
+            return
+        try:
+            self._request("POST", "/api/services/homeassistant/restart",
+                          payload={}, timeout=30)
+            print("    restart acknowledged")
+        except urllib.error.HTTPError as err:
+            if err.code < 500:
+                raise
+            print(f"    no reply (HTTP {err.code}) — expected, HA is going down")
+        except (urllib.error.URLError, OSError, TimeoutError) as err:
+            reason = getattr(err, "reason", err)
+            print(f"    connection dropped ({reason}) — expected, HA is going down")
+
     def wait_until_up(self, timeout: int = 240) -> bool:
         deadline = time.time() + timeout
         # Give it a moment to actually go down first, or we would see the old
@@ -151,8 +188,10 @@ def main() -> int:
 
     if not args.restart_only and not args.no_release:
         dirty = run("git", "status", "--porcelain")
-        if dirty:
+        if dirty and not args.dry_run:
             sys.exit("working tree is not clean — commit first:\n" + dirty)
+        if dirty:
+            print("    [dry-run] working tree is dirty; a real run would stop here")
 
         print(f"==> releasing {tag}")
         existing = run("git", "tag", "-l", tag)
@@ -195,13 +234,19 @@ def main() -> int:
                 if state.get("state") == "on":
                     print("    installing…")
                     ha.service("update", "install", entity_id=entity)
+                elif looks_like_commit(installed) or looks_like_commit(latest):
+                    print(f"    HACS is tracking the branch by commit, not releases,")
+                    print(f"    so it cannot see {tag}. This repo had no releases until")
+                    print(f"    now, and HACS caches that. To switch it over: HACS ->")
+                    print(f"    Ninja Woodfire -> the three-dot menu -> 'Update")
+                    print(f"    information', then run this again. Restarting anyway.")
                 else:
                     print("    HACS reports no update pending")
             else:
                 ha.service("update", "install", entity_id=entity)
 
     print("==> restarting Home Assistant")
-    ha.service("homeassistant", "restart")
+    ha.restart()
     if args.dry_run:
         print("==> dry run complete")
         return 0
