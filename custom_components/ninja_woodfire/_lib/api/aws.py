@@ -228,6 +228,36 @@ class AwsCloudClient:
                 raise AwsTransportError(f"GET {path} {resp.status}: {await resp.text()}")
             return await resp.json()
 
+    async def _patch(self, path: str, body: dict[str, Any]) -> Any:
+        """PATCH, retrying once through a fresh login on a 401.
+
+        A 200 here means the shadow accepted the desired state, not that the
+        grill has acted on it — delivery is asynchronous, and an offline grill
+        receives it whenever it next connects.
+        """
+        await self._ensure_session()
+        url = f"{self._region.aws_rest_base}{path}"
+        async with self._client().patch(
+            url, headers=self._headers(), json=body
+        ) as resp:
+            if resp.status == 401:
+                await self.login()
+                async with self._client().patch(
+                    url, headers=self._headers(), json=body
+                ) as retry:
+                    if retry.status not in (200, 201):
+                        raise AwsTransportError(
+                            f"PATCH {path} {retry.status}: {await retry.text()}"
+                        )
+                    return await retry.json()
+            if resp.status == 403:
+                raise AwsAuthError(f"PATCH {path} {resp.status}: {await resp.text()}")
+            if resp.status not in (200, 201):
+                raise AwsTransportError(
+                    f"PATCH {path} {resp.status}: {await resp.text()}"
+                )
+            return await resp.json()
+
     def _headers(self) -> dict[str, str]:
         return {
             "accept": "*/*",
@@ -311,6 +341,104 @@ class AwsCloudClient:
         if device is None:
             raise AwsCloudError(f"device {identifier!r} not found on the AWS backend")
         return state_from_device(identifier, device)
+
+    # ------------------------------------------------------------- commands
+    #
+    # Commands are written into the device shadow's `desired` section, which is
+    # what the phone app does. Two details are easy to get wrong:
+    #
+    #   * The payload uses the *spaced* firmware spelling ("seconds set",
+    #     "skip preheat") even though telemetry comes back with every space
+    #     stripped. Writes and reads use different dialects.
+    #   * `id` is not the Ayla device key here. The app sends 1001 to start and
+    #     1000 to stop, so those are mirrored rather than invented.
+    #
+    # Delivery is asynchronous: a 200 means the shadow accepted the desired
+    # state, not that the grill has seen it. The grill acknowledges by writing
+    # `reported.Cook_Command`, which is also where it records the transport it
+    # arrived over (e.g. "* (BTLE CMD)").
+
+    COOK_COMMAND_ID_START = 1001
+    COOK_COMMAND_ID_STOP = 1000
+
+    async def _write_desired(self, identifier: str, desired: dict[str, Any]) -> dict[str, Any]:
+        """PATCH one or more properties into the shadow's desired section."""
+        device = await self.find_device(identifier)
+        if device is None:
+            raise AwsCloudError(f"device {identifier!r} not found on the AWS backend")
+        device_id = str(device.get("deviceId"))
+        household = await self.get_household_id()
+        path = f"/devicesEndUserController/{household}/devices/{device_id}"
+        body = {"shadow": {"properties": {"desired": desired}}}
+        return await self._patch(path, body)
+
+    async def send_cook_command(
+        self, identifier: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Queue a cook command for the grill."""
+        _LOGGER.debug("aws cook command for %s: %s", identifier, payload)
+        return await self._write_desired(identifier, {"Cook_Command": payload})
+
+    async def start_cook(
+        self,
+        dsn: str,
+        *,
+        mode: str,
+        seconds: int,
+        temp: int,
+        smoke: bool = False,
+        skip_preheat: bool = False,
+        probe_0: dict[str, Any] | None = None,
+        probe_1: dict[str, Any] | None = None,
+        device_key: int | None = None,
+    ) -> dict[str, Any]:
+        """Start (or re-issue) a cook. Signature mirrors the Ayla client so the
+        coordinator can hold either without caring which."""
+        if mode not in COOK_MODES:
+            raise ValueError(f"unknown cook mode {mode!r}; expected one of {COOK_MODES}")
+        payload: dict[str, Any] = {
+            "id": self.COOK_COMMAND_ID_START,
+            "mode": mode,
+            "temp": int(temp),
+            "seconds set": int(seconds),
+            "smoke": 1 if smoke else 0,
+            "skip preheat": 1 if skip_preheat else 0,
+        }
+        if probe_0 is not None:
+            payload["probe0"] = probe_0
+        if probe_1 is not None:
+            payload["probe1"] = probe_1
+        return await self.send_cook_command(dsn, payload)
+
+    async def stop_cook(self, dsn: str) -> dict[str, Any]:
+        """Stop the running cook."""
+        return await self.send_cook_command(dsn, {
+            "id": self.COOK_COMMAND_ID_STOP,
+            "mode": "grill",
+            "temp": 0,
+            "seconds set": 0,
+            "smoke": 0,
+            "skip preheat": 0,
+        })
+
+    async def skip_preheat(
+        self,
+        dsn: str,
+        *,
+        mode: str,
+        seconds: int,
+        temp: int,
+        smoke: bool = False,
+        device_key: int | None = None,
+    ) -> dict[str, Any]:
+        """Skip preheat by re-issuing the cook with the flag set.
+
+        The firmware has no dedicated skip command on either backend.
+        """
+        return await self.start_cook(
+            dsn, mode=mode, seconds=seconds, temp=temp,
+            smoke=smoke, skip_preheat=True,
+        )
 
     async def read_state(self, dsn: str) -> CombinedState:
         """One poll's worth of state — the transport-agnostic read entry point.

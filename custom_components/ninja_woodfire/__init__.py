@@ -86,6 +86,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # — indefinitely, and with no error to notice. Commands are unaffected and
     # continue to go through Ayla either way.
     reader: Any = client
+    commander: Any = client
     backend = BACKEND_AYLA
     aws_client = AwsCloudClient(
         email=entry.data[CONF_EMAIL],
@@ -97,10 +98,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await aws_client.login()
         if await aws_client.find_device(dsn) is not None:
             reader = aws_client
+            commander = aws_client
             backend = BACKEND_AWS
             _LOGGER.info(
                 "ninja_woodfire %s: grill found on SharkNinja's AWS backend; "
-                "reading state from there. Commands still go through Ayla.",
+                "reading state and sending commands there. Ayla is not used — "
+                "a migrated grill never acknowledges Ayla datapoints.",
                 dsn,
             )
         else:
@@ -134,6 +137,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         capabilities=capabilities,
         device_key=device_key,
         reader=reader,
+        commander=commander,
         backend=backend,
         device_info_extra={
             "oem_model": str(device.get("oem_model", "")),

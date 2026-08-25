@@ -164,11 +164,50 @@ During preheat `secondsleft` stays pinned at `secondsset` and `endtimeutc`
 keeps sliding forward — the countdown only starts once preheat ends, so
 derived progress must exclude the preheat phase.
 
+## Commands
+
+Commands are written into the shadow's `desired` section:
+
+```
+PATCH /devicesEndUserController/{householdId}/devices/{deviceId}
+{"shadow": {"properties": {"desired": {"Cook_Command": {
+    "id": 1001, "mode": "air crisp", "temp": 200,
+    "seconds set": 300, "smoke": 0, "skip preheat": 0 }}}}}
+```
+
+Three things are easy to get wrong here.
+
+**The payload uses the spaced spelling.** Telemetry comes back with every
+space stripped, but commands are stored with the firmware's own names —
+`"seconds set"`, `"skip preheat"`, `"air crisp"`. Reads and writes use
+different dialects, and normalising the write payload the way reads are
+normalised produces a command the grill ignores.
+
+**`id` is not the Ayla device key.** The app sends `1001` to start and `1000`
+to stop; those are mirrored rather than invented.
+
+**A 200 is not delivery.** It means the shadow accepted the desired state. The
+grill acknowledges separately by writing `reported.Cook_Command`, and helpfully
+records the transport it arrived over — a command sent from the app over
+Bluetooth shows up as `"* (BTLE CMD)"`. An offline grill receives the command
+whenever it next connects, so a queued start will fire on power-on.
+
+The request body is validated against a strict whitelist: the endpoint accepts
+only `shadow` and `metadata`, and anything else returns
+`400 "property X should not exist"`. Malformed shadow bodies surface the
+underlying AWS IoT errors verbatim (`Shadow state must contain either
+"desired" or "reported"`), which is a convenient way to map the schema.
+
+### Reading the shadow back
+
+**`shadow` is only populated on the single-device endpoint.** The listing
+endpoint (`/users/{userId}`) returns `{"desired": {}, "reported": {}}` even
+when the shadow is full — use `/devices/{deviceId}` to read it. This is worth
+knowing before concluding that a write failed, or that something wiped the
+shadow.
+
 ## Not implemented
 
-- **Writes over AWS.** The shadow's `desired.Cook_Command` is the app's write
-  path and mirrors the Ayla cook payload (`id`, `mode`, `temp`, `seconds set`,
-  `smoke`, `skip preheat`). This integration writes through Ayla instead,
-  because that path is verified to work on a migrated grill and needs no new
-  code. Worth revisiting if Ayla is ever switched off.
-- **The WebSocket.** Polling covers it.
+- **The WebSocket.** Polling covers reads, and the socket is receive-only for
+  clients anyway: every message sent up it is answered `Forbidden`, including
+  the `sendMessage` action that appears in inbound frames.

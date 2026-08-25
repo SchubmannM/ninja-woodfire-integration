@@ -71,26 +71,23 @@ same grill's true state updated seconds earlier. Ayla's entire 30-day
 datapoint history held five state datapoints, all written at
 module-connect time.
 
-Crucially, **the two directions fail independently**. The cloud still
-*delivers commands* to such a grill: on the measured unit, cook commands
-sent through the cloud arrived and were acted on — verified from mobile
-data only, with the grill reporting `connection_status: Offline` and
-publishing no state throughout. So on an affected grill you get
-**control without monitoring**: Start and Stop work, and the cook
-settings (mode, temperature, duration, smoke, probe targets) work,
-because they are staged locally and sent as one command.
+**Commands follow the reads onto AWS.** A migrated grill does not
+receive Ayla datapoints either: the cloud accepts them, the grill never
+acknowledges them, and the write eventually times out. So on an affected
+grill both reads and commands go to the AWS backend, and Ayla is unused.
 
-Two consequences worth knowing:
+One consequence worth knowing:
 
 - **Skip preheat is unavailable** when state cannot be read. The firmware
   has no dedicated skip command — it is the whole cook payload re-issued
   with a flag — so without being able to read the running cook it would
   silently replace your mode, temperature and duration with whatever is
   staged.
-- **A command sent while the grill is unplugged is delivered when it next
-  powers on**, because the cloud holds the pending value. That is vendor
-  behaviour and the official app does the same, but it is worth knowing
-  before you press Start on a grill that is switched off at the socket.
+  Beyond that, **a command sent while the grill is unplugged is delivered
+  when it next powers on**, because the shadow holds the pending value.
+  That is vendor behaviour and the official app does the same, but it is
+  worth knowing before you press Start on a grill switched off at the
+  socket.
 
 ### If neither backend has live state
 

@@ -44,6 +44,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         device_key: int,
         device_info_extra: dict[str, str] | None = None,
         reader: Any | None = None,
+        commander: Any | None = None,
         backend: str = BACKEND_AYLA,
     ) -> None:
         """
@@ -54,6 +55,11 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             reader: where state is read from. Defaults to `client`; on a
                 migrated grill this is the AWS client instead. Anything with
                 an async `read_state(dsn)` returning a CombinedState will do.
+            commander: where cook commands are sent. Defaults to `client`.
+                A grill that has been migrated to AWS no longer receives Ayla
+                datapoints at all — they are accepted by the cloud, never
+                acknowledged by the grill, and time out — so commands have to
+                follow the reads onto the new backend.
             backend: which backend `reader` talks to, for diagnostics.
         """
         super().__init__(
@@ -64,6 +70,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         )
         self.client = client
         self.reader = reader if reader is not None else client
+        self.commander = commander if commander is not None else client
         self.backend = backend
         self.dsn = dsn
         self.capabilities = capabilities
@@ -351,7 +358,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             mode.duration_min_s,
             min(mode.duration_max_s, self.cook_setting_seconds),
         )
-        await self.client.start_cook(
+        await self.commander.start_cook(
             self.dsn,
             mode=self.cook_setting_mode,
             seconds=seconds,
@@ -365,7 +372,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         await self._burst_refresh()
 
     async def async_stop_cook(self) -> None:
-        await self.client.stop_cook(self.dsn)
+        await self.commander.stop_cook(self.dsn)
         await self._burst_refresh()
 
     async def async_skip_preheat(self) -> None:
@@ -405,7 +412,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 temp = live.grill.setpoint
             smoke = bool(live.grill.smoke)
 
-        await self.client.skip_preheat(
+        await self.commander.skip_preheat(
             self.dsn,
             mode=mode,
             seconds=seconds,
@@ -555,7 +562,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             if new_seconds > new_mode_caps.duration_max_s:
                 new_seconds = new_mode_caps.duration_max_s
 
-        await self.client.start_cook(
+        await self.commander.start_cook(
             self.dsn,
             mode=new_mode,
             seconds=new_seconds,

@@ -260,3 +260,129 @@ def test_aws_endpoints_come_from_the_region_not_module_constants() -> None:
     src = (root / "custom_components" / "ninja_woodfire" / "_lib" / "api" / "aws.py").read_text()
     assert "self._region.aws_rest_base" in src
     assert "self._region.aws_api_key" in src
+
+
+# ------------------------------------------------------------------ commands
+
+def _client_capturing():
+    """An AWS client whose shadow writes are captured instead of sent."""
+    from nwf_lib.api.aws import AwsCloudClient
+
+    client = AwsCloudClient("someone@example.invalid", "unused")
+    captured: dict = {}
+
+    async def fake_write(identifier, desired):
+        captured["identifier"] = identifier
+        captured["desired"] = desired
+        return {}
+
+    client._write_desired = fake_write
+    return client, captured
+
+
+def test_start_cook_payload_uses_the_spaced_firmware_spelling() -> None:
+    """Writes keep the spaces that reads strip.
+
+    Telemetry arrives de-spaced ("secondsset", "skippreheat"), so it is very
+    tempting to normalise the command payload the same way. That would be
+    wrong: the shadow stores commands with the firmware's own spelling, which
+    is the spaced Ayla one. Confirmed against a real write.
+    """
+    import asyncio
+
+    client, captured = _client_capturing()
+    asyncio.run(client.start_cook(
+        "AC000W000000000", mode="air crisp", seconds=300, temp=200,
+        smoke=True, skip_preheat=False,
+    ))
+    payload = captured["desired"]["Cook_Command"]
+    assert payload["seconds set"] == 300
+    assert payload["skip preheat"] == 0
+    assert "secondsset" not in payload
+    assert "skippreheat" not in payload
+    assert payload["mode"] == "air crisp"   # spaced here too
+    assert payload["temp"] == 200
+    assert payload["smoke"] == 1
+    assert payload["id"] == 1001            # the app's start id
+
+
+def test_stop_cook_payload() -> None:
+    import asyncio
+
+    client, captured = _client_capturing()
+    asyncio.run(client.stop_cook("AC000W000000000"))
+    payload = captured["desired"]["Cook_Command"]
+    assert payload["id"] == 1000            # the app's stop id
+    assert payload["temp"] == 0
+    assert payload["seconds set"] == 0
+    assert payload["smoke"] == 0
+
+
+def test_skip_preheat_reissues_the_cook_with_the_flag() -> None:
+    """There is no dedicated skip command on either backend."""
+    import asyncio
+
+    client, captured = _client_capturing()
+    asyncio.run(client.skip_preheat(
+        "AC000W000000000", mode="bake", seconds=600, temp=180, smoke=False,
+    ))
+    payload = captured["desired"]["Cook_Command"]
+    assert payload["skip preheat"] == 1
+    assert payload["seconds set"] == 600
+    assert payload["mode"] == "bake"
+
+
+def test_unknown_cook_mode_is_rejected_before_sending() -> None:
+    import asyncio
+
+    import pytest as _pytest
+
+    client, captured = _client_capturing()
+    with _pytest.raises(ValueError):
+        asyncio.run(client.start_cook(
+            "AC000W000000000", mode="teleport", seconds=60, temp=100,
+        ))
+    assert not captured, "nothing should be sent for an invalid mode"
+
+
+def test_both_backends_expose_the_same_command_interface() -> None:
+    """The coordinator holds whichever backend setup chose.
+
+    Ayla and AWS must therefore agree on the command surface, exactly as they
+    already do on `read_state`.
+    """
+    import inspect
+
+    from nwf_lib.api.aws import AwsCloudClient
+    from nwf_lib.api.ayla import AylaCloudClient
+
+    for name in ("start_cook", "stop_cook", "skip_preheat"):
+        for cls in (AwsCloudClient, AylaCloudClient):
+            fn = getattr(cls, name, None)
+            assert fn is not None, f"{cls.__name__} is missing {name}()"
+            assert inspect.iscoroutinefunction(fn), f"{cls.__name__}.{name} must be async"
+        aws_params = set(inspect.signature(AwsCloudClient.start_cook).parameters)
+        ayla_params = set(inspect.signature(AylaCloudClient.start_cook).parameters)
+        assert ayla_params <= aws_params, (
+            f"AWS start_cook is missing parameters the Ayla one accepts: "
+            f"{ayla_params - aws_params}"
+        )
+
+
+def test_commands_are_routed_through_the_commander() -> None:
+    """Commands must not be hardcoded to the Ayla client.
+
+    A migrated grill never acknowledges Ayla datapoints — the cloud accepts
+    them, the grill never sees them, and the write times out. Routing through
+    `commander` is what lets setup point commands at whichever backend the
+    grill is actually on.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    src = (root / "custom_components" / "ninja_woodfire" / "coordinator.py").read_text()
+    for call in ("start_cook(", "stop_cook(", "skip_preheat("):
+        assert f"self.client.{call}" not in src, (
+            f"{call} must go through self.commander, not self.client"
+        )
+        assert f"self.commander.{call}" in src
