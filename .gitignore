@@ -19,3 +19,6 @@ ninja_woodfire_credentials.txt
 
 # mise-managed virtualenv
 .venv/
+
+# Output of scripts/ble_probe.py — contains device identifiers.
+ble_probe_output.json
