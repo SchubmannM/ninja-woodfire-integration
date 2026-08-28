@@ -6,9 +6,13 @@ Findings from a reverse-engineering session against a real **OG900-EU**
 
 > **Superseded — read this first.** This was written while the cloud path
 > looked like a dead end. It is not: the grill reports fine, just to
-> SharkNinja's **AWS** backend rather than Ayla, and the integration now reads
-> from there. See [AWS_API.md](AWS_API.md). Nothing below is needed to make
-> the integration work.
+> SharkNinja's **AWS** backend rather than Ayla, and the integration now both
+> reads *and sends commands* there. See [AWS_API.md](AWS_API.md). Nothing
+> below is needed to make the integration work.
+>
+> Both local channels — the tcp/85 stream and Bluetooth LE — turned out to be
+> encrypted, and blocked on the same key material inside the app's Rust core.
+> They are documented here so nobody repeats the investigation.
 >
 > It is kept because the findings are hard-won and still true: the grill does
 > expose an undocumented encrypted stream on the LAN, and if the vendor ever
@@ -138,6 +142,52 @@ open port while the app demonstrably reads live state locally, which is
 compelling — but the app's traffic was never actually captured. `SET_Enable_RT_Log`
 ("real-time log") hints at an alternative purpose. Confirming it needs a packet
 capture of the phone talking to the grill.
+
+## Bluetooth LE — mapped, and closed
+
+The app uses BLE whenever the phone is near the grill: in one capture 529 of
+570 state samples came from Bluetooth rather than the cloud, and the grill
+acknowledges those commands distinctly, writing `reported.Cook_Command` as
+`"* (BTLE CMD)"`. Home Assistant can see the grill advertising too (service
+`0xFCBB`, RSSI -72 through a Shelly proxy), so a local transport looked
+plausible. It is not, without the app's crypto.
+
+The grill advertises as `NCEU<mac>` and exposes one service:
+
+| characteristic | properties | observed |
+|---|---|---|
+| `0000b001` | read | 96 B, maximal entropy — challenge or key material |
+| `0000b002` | write, write-without-response | the command channel |
+| `0000b003` | notify | **never sends anything** |
+| `0000b004` | indicate | 96 B frames on connect, maximal entropy |
+
+Every payload is 96 bytes — exactly 6 AES blocks — at 6.26 bits/byte, which is
+the ceiling for a 96-byte sample rather than a shortfall from 8. It is
+ciphertext.
+
+**The decisive test.** Connect without authenticating, subscribe to everything
+that notifies, then drive the grill from its own panel for two minutes:
+increase the timer, decrease the temperature, stop the cook. Result: one
+handshake frame on `b004` at connect, and then **complete silence**. `b003`,
+the state stream, sent nothing at all.
+
+So the grill gates all telemetry behind a handshake it offers on connect. There
+is no read-only subset to listen in on, and no partial win — an
+unauthenticated client gets a GATT map and nothing else.
+
+Continuing means reversing the BLE crypto in `libgrillcore_android.so`:
+locating the handshake, recovering the key derivation, then decoding bincode
+structs on top of it. The `setkey:<8 chars>` value the app writes over the
+cloud is very likely the shared secret feeding it — every trivial derivation
+from it was already tried against the port-85 stream and none worked.
+
+Capturing the app's own BLE traffic would shortcut the handshake, but Android's
+HCI snoop log could not be extracted on the test device: OxygenOS `dumpstate`
+fails to finalise the zip (`Failed to add text entry to .zip file`), and the
+log is unreadable without root.
+
+`scripts/ble_probe.py` performs the enumeration above and records every frame
+with a timestamp, for whoever picks this up.
 
 ## Why the *Ayla* path fails on this unit
 
