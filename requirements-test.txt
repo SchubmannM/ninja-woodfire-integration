@@ -2,3 +2,8 @@
 # (custom_components/ninja_woodfire/_lib) only — Home Assistant is not needed.
 pytest>=8.0
 aiohttp>=3.9
+# The shipped automation blueprints are checked against const.EVENT_* and
+# their notification text is rendered, so the templates are exercised
+# rather than merely parsed. Home Assistant brings both of these anyway.
+pyyaml>=6.0
+jinja2>=3.1

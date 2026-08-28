@@ -28,7 +28,7 @@ the integration will actually run on:
 ```bash
 mise install       # fetch the pinned Python, create .venv
 mise run install   # test deps + git hooks
-mise run test      # 53 tests, ~2s, no HA needed
+mise run test      # 124 tests, <1s, no HA needed
 mise run check     # everything the pre-commit hooks check
 mise run compile   # syntax check without importing HA
 mise run deploy    # release + roll out to HA (see below)
@@ -184,6 +184,60 @@ non-live snapshot, so a grill dropping off mid-cook cannot fire a bogus
 places — cook start and cook done — so adding an event means adding its reset to
 both, and updating the list in `README.md`.
 
+Every payload carries `_event_identity()`: `dsn`, `device_id` and
+`device_name`. The DSN alone was not enough to build anything decent on — a
+blueprint keyed on it has to ask the user for a serial, and the notification it
+sends names one. The registry is read on each emit rather than cached, so a
+rename in the UI takes effect at once (`name_by_user` wins). All three keys are
+always present and are `None` until the device exists, which is after the first
+refresh — so a template that reads them renders empty rather than erroring.
+
+**Do not add bus events for things that are already entities.** Lid-left-open,
+error codes and went-offline are `binary_sensor.lid_open`,
+`sensor.error_code` and `binary_sensor.cloud_connected`; a blueprint triggers
+on those directly, and gets UI visibility, Developer Tools and no `_*_fired`
+bookkeeping for free. Bus events are for transitions with no entity — the cook
+phases.
+
+### Blueprints
+
+`blueprints/automation/ninja_woodfire/` ships two automation blueprints:
+`cook_notifications.yaml` (the six bus events) and `grill_alerts.yaml` (lid
+left open, error code, gone quiet mid-cook). They are the answer to "your food
+is ready", which an integration cannot send on its own.
+
+**HACS does not install them.** It copies `custom_components/<domain>/` and
+nothing else, so the README's `my.home-assistant.io/redirect/blueprint_import`
+buttons are the actual delivery mechanism. Those URLs embed the file's raw
+GitHub path — as does each blueprint's own `source_url`, which is what Home
+Assistant offers as "re-import".
+
+**An alert cannot both trigger on a state-mirroring entity going away and
+condition on another one.** They go together. Every entity with
+`_requires_live_state` is unavailable the moment `state_is_live` is false, in
+the same update pass — so a "grill went offline" alert triggered on
+`binary_sensor.cloud_connected` could never find `sensor.grill_state` still
+reading `cooking`. It was structurally dead, and it looked fine. The alert now
+triggers on the **state sensor itself** going `unavailable` and reads
+`trigger.from_state` for the cook. That also catches the failure this fork
+exists for, which connectivity never sees at all: a migrated grill stays
+connected while its data freezes.
+
+Three more things about the YAML that are not obvious:
+
+- The `!input` tag defeats a plain YAML parser, so `blueprints/` is excluded
+  from the `check-yaml` hook. `tests/test_blueprints.py` loads them with a
+  constructor for it and checks considerably more.
+- An action-selector input is spliced with `choose: [] / default: !input`, not
+  a bare `- !input`. The input's value is a *list* of actions, and at a list
+  position a bare `!input` nests one list inside another.
+- `grill_alerts.yaml` carries a third copy of `ACTIVE_STATES`, in YAML, where
+  nothing can import it. The other two had already drifted; this one is pinned
+  by a test asserting set equality against `models.ACTIVE_COOK_STATES`.
+
+Messages quote no probe temperature on purpose: the payload is always °C, and
+a household displaying °F would be told the wrong number.
+
 ### Capabilities table
 
 `_lib/capabilities.py` maps `oem_model` → `GrillCapabilities` (per-mode temp
@@ -213,6 +267,21 @@ longer proves the parser handles the real wire format.
 
 `conftest.py` exposes `ayla_fixture_names()` / `aws_fixture_names()` — the two
 sets have different shapes, so never glob all fixtures into one parametrize.
+`hydrate()` builds a `CombinedState` from an Ayla fixture and `hydrate_aws()`
+from an AWS one, both rebasing the timestamp so liveness is deterministic.
+
+`coordinator.py` is the one HA module the suite does reach, via
+`load_coordinator()`. It imports four things from `homeassistant`, so `conftest`
+stands those up (`FakeHass`, `FakeBus`, `FakeDeviceRegistry`) and
+registers the integration directory as `nwf_ha` — the same trick as `nwf_lib`,
+and for the same reason: it keeps `select.py` and friends off `sys.path`. That
+buys real coverage of the cook-lifecycle state machine, which is pure logic
+over two snapshots and had none.
+
+Lifecycle transitions in `test_lifecycle_events.py` are driven from the real
+fixtures rather than hand-built states. `GrillState.state` reads "cooking"
+throughout preheat and the sub-phase lives in `CookState.state`, which is
+exactly what a hand-written state gets wrong.
 
 When you learn something new about the hardware, add a fixture. Most of the
 subtle bugs found so far were caught by parsing a real payload, not by reasoning.

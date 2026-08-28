@@ -1,0 +1,192 @@
+blueprint:
+  name: "Ninja Woodfire: grill alerts"
+  description: >
+    Warnings rather than good news: the lid left open mid-cook, a firmware
+    error, or the grill going quiet while it is still cooking.
+
+
+    These are built on the integration's own entities rather than on cook
+    events. The lid and error alerts need you to pick their sensor and stay
+    silent until you do; the quiet-grill one needs nothing beyond the state
+    sensor below and is on by default.
+
+
+    Pick the entities belonging to *one* grill. If you have two, add this
+    automation twice.
+
+
+    For preheat / halfway / food-ready notifications, see the companion
+    "Ninja Woodfire: cook notifications" blueprint.
+  domain: automation
+  source_url: https://github.com/SchubmannM/ninja-woodfire-integration/blob/main/blueprints/automation/ninja_woodfire/grill_alerts.yaml
+  author: SchubmannM
+  input:
+    grill_state:
+      name: Grill state sensor
+      description: >
+        The grill's "Grill state" sensor. Used to tell an open lid mid-cook
+        from an open lid on a cold grill, so it is needed even though it never
+        triggers anything on its own.
+      selector:
+        entity:
+          filter:
+            - integration: ninja_woodfire
+              domain: sensor
+    alerts:
+      name: Alerts
+      collapsed: false
+      input:
+        lid_sensor:
+          name: Lid left open
+          description: >
+            The grill's "Lid open" sensor. Alerts when the lid has been open
+            for the grace period below while a cook is running.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - integration: ninja_woodfire
+                  domain: binary_sensor
+        lid_grace:
+          name: How long the lid may stay open
+          description: >
+            Long enough to turn the food without being nagged.
+          default:
+            minutes: 3
+          selector:
+            duration: {}
+        error_sensor:
+          name: Firmware error
+          description: >
+            The grill's "Error code" sensor. Alerts on any non-zero code.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - integration: ninja_woodfire
+                  domain: sensor
+        offline:
+          name: Went quiet mid-cook
+          description: >
+            Alert if the grill stops reporting while a cook is running — the
+            point at which Home Assistant stops knowing what the food is
+            doing. Watches the grill state sensor above, so there is nothing
+            more to pick.
+          default: true
+          selector:
+            boolean: {}
+    notify_action:
+      name: How to notify
+      description: >
+        Runs once per alert, with `{{ title }}` and `{{ message }}` already
+        written for you. Worth pointing at a louder channel than the cook
+        notifications — these are the ones you want to interrupt you.
+      default:
+        - action: notify.notify
+          data:
+            title: "{{ title }}"
+            message: "{{ message }}"
+      selector:
+        action: {}
+
+mode: queued
+max: 5
+
+triggers:
+  - trigger: state
+    entity_id: !input lid_sensor
+    to: "on"
+    for: !input lid_grace
+    id: lid_open
+  - trigger: numeric_state
+    entity_id: !input error_sensor
+    above: 0
+    id: error
+  # Deliberately the grill-state sensor and not "Cloud connected".
+  #
+  # Those two go unavailable/off in the same update pass, so a condition on
+  # the grill state could never see a cook still running by the time a
+  # connectivity trigger fired — the alert would be structurally dead. Worse,
+  # the failure this repo exists for does not touch connectivity at all: a
+  # migrated grill stays "connected" while its data freezes, so only the
+  # liveness gate on the state sensor notices. `from_state` still remembers
+  # what the grill was doing, which is all the condition needs.
+  - trigger: state
+    entity_id: !input grill_state
+    to: "unavailable"
+    for:
+      seconds: 30
+    id: offline
+
+variables:
+  grill_state_entity: !input grill_state
+  offline_enabled: !input offline
+  # Kept in step with const.ACTIVE_STATES by tests/test_blueprints.py — the
+  # two copies of this list in the integration had already drifted once.
+  cooking_states:
+    - cook
+    - cooking
+    - flip
+    - get food
+    - get_food
+    - heat
+    - lid open
+    - lid_open
+    - preheat
+    - preheating
+    - rest
+    - resting
+    - start
+
+conditions:
+  # The lid and offline alerts only matter while something is cooking, and
+  # "cooking" covers preheat too — the firmware reports the whole cook that
+  # way. A firmware fault is worth knowing about whenever it appears, and the
+  # numeric_state trigger fires on the crossing rather than continuously, so
+  # that branch is not gated: gating it on the cook states would kill it the
+  # moment the grill reported its fault as `error` rather than `cooking`,
+  # which is exactly how the offline alert used to be dead.
+  #
+  # The offline branch has to read `from_state`: by the time it fires, the
+  # state sensor is unavailable by definition, so asking what it says now
+  # would always answer "not cooking".
+  - condition: template
+    value_template: >-
+      {%- set offline = trigger.id == 'offline' -%}
+      {%- set fault = trigger.id == 'error' -%}
+      {%- set was = trigger.from_state.state if offline
+                    else states(grill_state_entity) -%}
+      {{- (fault or was in cooking_states)
+          and (offline_enabled or not offline) -}}
+
+actions:
+  - variables:
+      grill_name: >-
+        {{ device_attr(grill_state_entity, 'name_by_user')
+           or device_attr(grill_state_entity, 'name')
+           or 'The grill' }}
+      title: >-
+        {%- if trigger.id == 'lid_open' -%}
+          {{ grill_name }} — lid open
+        {%- elif trigger.id == 'error' -%}
+          {{ grill_name }} — error
+        {%- else -%}
+          {{ grill_name }} — gone quiet
+        {%- endif -%}
+      message: >-
+        {%- if trigger.id == 'lid_open' -%}
+          The lid has been open for a while and the grill is still cooking.
+        {%- elif trigger.id == 'error' -%}
+          The grill is reporting error code {{ trigger.to_state.state }}.
+        {%- else -%}
+          The grill has gone quiet mid-cook — Home Assistant no longer knows what it is doing.
+        {%- endif -%}
+  # `choose: []` with only a default is the documented way to splice an
+  # action-selector input into a sequence: the input's value is a *list* of
+  # actions, and `default:` takes a list, whereas a bare `- !input` at this
+  # position would nest one list inside another.
+  - alias: Send it
+    choose: []
+    default: !input notify_action

@@ -12,6 +12,10 @@ repos:
     hooks:
       - id: check-json
       - id: check-yaml
+        # Home Assistant blueprints use the `!input` tag, which a plain YAML
+        # parser cannot resolve. `tests/test_blueprints.py` loads them with a
+        # constructor for it and checks a good deal more besides.
+        exclude: ^blueprints/
       - id: end-of-file-fixer
       - id: trailing-whitespace
         # Fixture payloads are byte-preserved captures from the grill; the
@@ -45,13 +49,14 @@ repos:
         files: ^custom_components/.*\.py$
 
       # `language: python` so pre-commit builds and caches its own environment.
-      # The suite needs only pytest and aiohttp — Home Assistant is never
-      # imported, because everything under _lib/ is deliberately free of it —
-      # so this works on a clean checkout with no local venv setup.
+      # Home Assistant is never imported — everything under _lib/ is
+      # deliberately free of it, and the coordinator tests stub the four
+      # symbols it does use — so this works on a clean checkout with no local
+      # venv setup. Keep in step with requirements-test.txt.
       - id: pytest
         name: pytest
         entry: pytest -q
         language: python
-        additional_dependencies: [pytest>=8.0, aiohttp>=3.9]
+        additional_dependencies: [pytest>=8.0, aiohttp>=3.9, pyyaml>=6.0, jinja2>=3.1]
         pass_filenames: false
-        files: ^(custom_components|tests)/
+        files: ^(custom_components|tests|blueprints)/

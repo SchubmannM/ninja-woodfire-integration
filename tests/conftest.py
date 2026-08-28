@@ -127,3 +127,147 @@ def ayla_fixture_names() -> list[str]:
 @pytest.fixture
 def fixture_loader():
     return load_fixture
+
+
+# ---------------------------------------------------------------- coordinator
+
+# `coordinator.py` is the only Home Assistant module worth unit-testing: it
+# holds the cook-lifecycle state machine, which is pure logic over two
+# consecutive snapshots and has no business needing a running Home Assistant
+# to exercise. It imports four things from `homeassistant`, so it is cheaper
+# to stand those up than to install the framework.
+#
+# Registering `nwf_ha` the same way as `nwf_lib` above keeps the integration
+# directory off `sys.path` — `select.py`, `button.py` and `number.py` shadow
+# stdlib modules, and only ever resolve here as `nwf_ha.select`.
+
+_HA_PKG = "nwf_ha"
+INTEGRATION = ROOT / "custom_components" / "ninja_woodfire"
+
+
+class FakeDevice:
+    """A device registry entry, as far as the coordinator is concerned."""
+
+    def __init__(self, device_id: str, name: str, name_by_user: str | None = None):
+        self.id = device_id
+        self.name = name
+        self.name_by_user = name_by_user
+
+
+class FakeDeviceRegistry:
+    def __init__(self, devices: dict[frozenset, FakeDevice] | None = None):
+        self._devices = devices or {}
+
+    def add(self, identifiers: set, device: FakeDevice) -> None:
+        self._devices[frozenset(identifiers)] = device
+
+    def async_get_device(self, identifiers=None, connections=None):
+        return self._devices.get(frozenset(identifiers or ()))
+
+
+class FakeBus:
+    """Records what was fired instead of dispatching it."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    def async_fire(self, event_type: str, data: dict | None = None) -> None:
+        self.events.append((event_type, dict(data or {})))
+
+    def of_type(self, event_type: str) -> list[dict]:
+        return [data for name, data in self.events if name == event_type]
+
+    def types(self) -> list[str]:
+        return [name for name, _ in self.events]
+
+
+class FakeHass:
+    def __init__(self) -> None:
+        self.bus = FakeBus()
+        self.device_registry = FakeDeviceRegistry()
+
+
+def _install_ha_stubs() -> None:
+    """Minimal stand-ins for the three Home Assistant imports coordinator uses."""
+    if _HA_PKG in sys.modules:
+        return
+
+    ha = types.ModuleType("homeassistant")
+    ha.__path__ = []
+
+    core = types.ModuleType("homeassistant.core")
+    core.HomeAssistant = FakeHass
+
+    helpers = types.ModuleType("homeassistant.helpers")
+    helpers.__path__ = []
+
+    device_registry = types.ModuleType("homeassistant.helpers.device_registry")
+    # The real `async_get` returns the singleton registry for a hass instance.
+    device_registry.async_get = lambda hass: hass.device_registry
+
+    update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+
+    class _DataUpdateCoordinator:
+        def __init__(self, hass, logger, name=None, update_interval=None):
+            self.hass = hass
+            self.logger = logger
+            self.name = name
+            self.update_interval = update_interval
+
+        def __class_getitem__(cls, item):
+            return cls
+
+    class _UpdateFailed(Exception):
+        pass
+
+    update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
+    update_coordinator.UpdateFailed = _UpdateFailed
+
+    for name, module in {
+        "homeassistant": ha,
+        "homeassistant.core": core,
+        "homeassistant.helpers": helpers,
+        "homeassistant.helpers.device_registry": device_registry,
+        "homeassistant.helpers.update_coordinator": update_coordinator,
+    }.items():
+        sys.modules.setdefault(name, module)
+
+    pkg = types.ModuleType(_HA_PKG)
+    pkg.__path__ = [str(INTEGRATION)]
+    pkg.__package__ = _HA_PKG
+    sys.modules[_HA_PKG] = pkg
+
+
+def load_coordinator():
+    """Import `coordinator.py` against the stubs above."""
+    _install_ha_stubs()
+    import importlib
+
+    return importlib.import_module(f"{_HA_PKG}.coordinator")
+
+
+def hydrate_aws(name: str, *, age_seconds: float = 0.0, online: bool = True):
+    """`hydrate` for the AWS envelope.
+
+    The two backends serve different shapes — Ayla nests under `properties`,
+    AWS under `telemetry` — so they need separate constructors. As with
+    `hydrate`, the timestamp is rebased so liveness is deterministic.
+    """
+    import datetime as _dt
+
+    from nwf_lib.api.aws import state_from_device
+
+    fx = load_fixture(name)
+    state = state_from_device(
+        "AC000W000000000",
+        {
+            "telemetry": fx["telemetry"],
+            "connectivityStatus": {"connected": online},
+            "updatedAt": fx["device"].get("updatedAt"),
+        },
+    )
+    state.online = online
+    state.last_updated_at = (
+        _dt.datetime.now(tz=_dt.timezone.utc) - _dt.timedelta(seconds=age_seconds)
+    )
+    return state

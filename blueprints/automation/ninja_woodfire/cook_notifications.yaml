@@ -1,0 +1,169 @@
+blueprint:
+  name: "Ninja Woodfire: cook notifications"
+  description: >
+    Push notifications for a cook on a Ninja Woodfire grill — preheat done,
+    halfway, food ready, meat probe at temperature.
+
+
+    Pick your grill, tick what you want to hear about, and you are finished:
+    the message text is written for you. The notification action starts out as
+    `notify.notify`, which pushes to every device signed in to Home Assistant;
+    replace it if you would rather send to one phone, announce it on a speaker,
+    or do something else entirely. `{{ title }}` and `{{ message }}` are
+    available wherever you use it.
+
+
+    `notify.notify` only exists if something provides it — the companion app
+    does. On an instance with no notify platform at all, pick your own action
+    here or the automation will fail at the last step.
+
+
+    For lid-left-open, error and went-offline warnings, see the companion
+    "Ninja Woodfire: grill alerts" blueprint.
+  domain: automation
+  source_url: https://github.com/SchubmannM/ninja-woodfire-integration/blob/main/blueprints/automation/ninja_woodfire/cook_notifications.yaml
+  author: SchubmannM
+  input:
+    grill:
+      name: Grill
+      description: >
+        Which grill to watch. Only matters if you have two, but the automation
+        has to name one.
+      selector:
+        device:
+          filter:
+            - integration: ninja_woodfire
+    events:
+      name: Notify me when
+      description: >
+        The halfway ones are the quiet pair — useful on a long smoke, noise on
+        a ten-minute grill.
+      default:
+        - cook_started
+        - preheat_complete
+        - cook_done
+        - probe_target_reached
+      selector:
+        select:
+          multiple: true
+          mode: list
+          options:
+            - label: The cook starts
+              value: cook_started
+            - label: Preheating has finished — time to put the food on
+              value: preheat_complete
+            - label: The cook is halfway through
+              value: cook_halftime
+            - label: The cook has finished
+              value: cook_done
+            - label: A meat probe has reached its target
+              value: probe_target_reached
+            - label: A meat probe has passed half its target temperature
+              value: probe_halfway
+    notify_action:
+      name: How to notify
+      description: >
+        Runs once per notification, with `{{ title }}` and `{{ message }}`
+        already written for you.
+      default:
+        - action: notify.notify
+          data:
+            title: "{{ title }}"
+            message: "{{ message }}"
+      selector:
+        action: {}
+
+# Two of these can land within a second of each other at the end of a cook —
+# probe target, then done. Queue them rather than dropping one.
+mode: queued
+max: 10
+
+triggers:
+  - trigger: event
+    event_type: ninja_woodfire_cook_started
+    id: cook_started
+  - trigger: event
+    event_type: ninja_woodfire_preheat_complete
+    id: preheat_complete
+  - trigger: event
+    event_type: ninja_woodfire_cook_halftime
+    id: cook_halftime
+  - trigger: event
+    event_type: ninja_woodfire_cook_done
+    id: cook_done
+  - trigger: event
+    event_type: ninja_woodfire_probe_target_reached
+    id: probe_target_reached
+  - trigger: event
+    event_type: ninja_woodfire_probe_halfway
+    id: probe_halfway
+
+variables:
+  grill: !input grill
+  wanted: !input events
+
+conditions:
+  # Every grill fires these, so ignore the other one's.
+  - condition: template
+    value_template: "{{ trigger.event.data.device_id == grill }}"
+  - condition: template
+    value_template: "{{ trigger.id in wanted }}"
+
+actions:
+  - variables:
+      # Read straight off the trigger rather than aliasing the payload into a
+      # variable: a variable would render the whole dict to a string and be
+      # parsed back, which happens to work for scalars and is a poor thing to
+      # depend on.
+      #
+      # The grill names itself, and follows a rename in the UI. The name is
+      # null until the device registry has caught up, hence the fallback.
+      grill_name: "{{ trigger.event.data.device_name or 'The grill' }}"
+      # The firmware's own mode spelling: "grill", "air crisp", "smoker".
+      cook_mode: "{{ (trigger.event.data.mode or '') | title }}"
+      # Probe events are 0-indexed; the grill's own display is not.
+      probe: "Probe {{ (trigger.event.data.probe_index | int(0)) + 1 }}"
+      minutes: "{{ ((trigger.event.data.seconds_set | int(0)) / 60) | round | int }}"
+      # No temperatures in these messages on purpose: the event payload is
+      # always °C, and repeating it at a household that displays °F would be
+      # worse than leaving the number out.
+      title: >-
+        {%- if trigger.id == 'cook_done' -%}
+          {{ grill_name }} — {{ 'cook finished' if trigger.event.data.reason == 'done' else 'cook stopped' }}
+        {%- elif trigger.id == 'preheat_complete' -%}
+          {{ grill_name }} — preheated
+        {%- elif trigger.id == 'probe_target_reached' -%}
+          {{ grill_name }} — {{ probe | lower }} ready
+        {%- elif trigger.id == 'probe_halfway' -%}
+          {{ grill_name }} — {{ probe | lower }} halfway
+        {%- elif trigger.id == 'cook_halftime' -%}
+          {{ grill_name }} — halfway
+        {%- else -%}
+          {{ grill_name }} — cook started
+        {%- endif -%}
+      message: >-
+        {%- if trigger.id == 'cook_started' -%}
+          {{ cook_mode if cook_mode else 'A cook' }} has started
+          {{- ', %s minutes' | format(minutes) if minutes | int > 0 else '' }}.
+        {%- elif trigger.id == 'preheat_complete' -%}
+          Preheating is done — put the food on.
+        {%- elif trigger.id == 'cook_halftime' -%}
+          Halfway through{{ ' the %s cook' | format(cook_mode) if cook_mode else '' }}.
+        {%- elif trigger.id == 'cook_done' -%}
+          {%- if trigger.event.data.reason == 'done' -%}
+            The cook has finished — your food is ready.
+          {%- else -%}
+            The cook was stopped before it finished.
+          {%- endif -%}
+        {%- elif trigger.id == 'probe_target_reached' -%}
+          {{ probe }} has reached its target temperature.
+        {%- elif trigger.id == 'probe_halfway' -%}
+          {{ probe }} has passed half its target temperature.
+        {%- endif -%}
+  # `choose: []` with only a default is the documented way to splice an
+  # action-selector input into a sequence: the input's value is a *list* of
+  # actions, and `default:` takes a list, whereas a bare `- !input` at this
+  # position would nest one list inside another.
+  - alias: Send it
+    choose: []
+    default: !input notify_action

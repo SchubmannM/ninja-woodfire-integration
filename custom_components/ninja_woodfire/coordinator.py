@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from ._lib.api.aws import AwsAuthError, AwsTransportError
@@ -180,6 +181,33 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
             int(STATE_MAX_AGE.total_seconds())
         )
 
+    def _event_identity(self) -> dict[str, Any]:
+        """Who a lifecycle event is about, in terms an automation can use.
+
+        The DSN alone is a poor handle. A blueprint keyed on it has to be
+        configured with a serial the user must go and dig out of a diagnostic
+        sensor, and the notification it sends says "ac000w000000000 is done".
+
+        The device id gives a blueprint a real device picker; the name gives
+        the message something to call the grill. Both are read from the
+        registry on every emit rather than cached, so renaming the device in
+        the UI takes effect immediately — `name_by_user` is that rename.
+
+        The device is created by the first entity, which is added after the
+        first refresh, so the earliest polls may find nothing. The keys are
+        always present; they are None until the device exists.
+        """
+        device = dr.async_get(self.hass).async_get_device(
+            identifiers={(DOMAIN, self.dsn)}
+        )
+        return {
+            "dsn": self.dsn,
+            "device_id": device.id if device else None,
+            "device_name": (
+                (device.name_by_user or device.name) if device else None
+            ),
+        }
+
     def _emit_lifecycle_events(self, state: CombinedState) -> None:
         """Fire HA events on cook-lifecycle transitions.
 
@@ -201,8 +229,9 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
         new_grill = state.grill.state
         new_cook = state.cook.state
 
+        identity = self._event_identity()
         common = {
-            "dsn": self.dsn,
+            **identity,
             "mode": state.grill.mode,
             "setpoint": state.grill.setpoint,
         }
@@ -289,7 +318,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                         self.hass.bus.async_fire(
                             EVENT_PROBE_HALFWAY,
                             {
-                                "dsn": self.dsn,
+                                **identity,
                                 "probe_index": idx,
                                 "target": target,
                                 "halfway": halfway,
@@ -305,7 +334,7 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                     self.hass.bus.async_fire(
                         EVENT_PROBE_TARGET_REACHED,
                         {
-                            "dsn": self.dsn,
+                            **identity,
                             "probe_index": idx,
                             "target": target,
                             "current": probe.temp,

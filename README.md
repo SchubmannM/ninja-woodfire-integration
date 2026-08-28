@@ -31,12 +31,15 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
   smoke, per-probe targets.
 - Adaptive polling — fast while cooking, relaxed while idle.
 - Auto-reconnect on token expiry.
+- Push notifications, via two [ready-made blueprints](#notifications) — no
+  YAML to write.
 - HA event-bus events for automations:
   - `ninja_woodfire_cook_started`
   - `ninja_woodfire_preheat_complete`
   - `ninja_woodfire_cook_halftime`
   - `ninja_woodfire_cook_done`
   - `ninja_woodfire_probe_target_reached`
+  - `ninja_woodfire_probe_halfway`
 - Connectivity diagnostics: `Backend`, `Cloud connected` and `Last cloud report`,
   so a grill that isn't reporting is visible as such rather than
   silently rendering as an idle grill (see *Known limitation* below).
@@ -235,22 +238,74 @@ guarantee of fitness for any purpose**.
 
 If any of that is a problem for you, do not install this.
 
-## Automation example — notify when probe hits target
+## Notifications
+
+"Your food is ready" is the thing the phone app is actually for, and the
+integration cannot send it itself — a notification needs an automation. Two
+blueprints ship with the repo so you do not have to write one.
+
+HACS installs integrations, not blueprints, so these are imported separately.
+Click the button, confirm the URL, and fill in the form:
+
+[![Import the cook-notifications blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSchubmannM%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fcook_notifications.yaml)
+
+**Cook notifications** — preheat finished, halfway, food ready, meat probe at
+temperature. Pick your grill, tick what you want to hear about, done. The
+message text is written for you; the notification action defaults to
+`notify.notify` (every device signed in to Home Assistant) and can be swapped
+for one phone, a speaker announcement, or anything else.
+
+[![Import the grill-alerts blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSchubmannM%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fgrill_alerts.yaml)
+
+**Grill alerts** — the lid left open mid-cook, a firmware error code, or the
+grill going quiet while it is still cooking. Built on the integration's
+entities rather than on cook events, so each alert can be left unset. Worth
+pointing at a louder notification channel than the cook ones.
+
+The quiet-grill alert watches the *state* sensor rather than *Cloud
+connected*, which is the only thing that catches a migrated grill: those stay
+connected while their data freezes (see [Why this
+matters](#why-this-matters)), so connectivity never drops at all.
+
+Both live in [`blueprints/automation/ninja_woodfire/`](blueprints/automation/ninja_woodfire/);
+you can also copy them into `<config>/blueprints/automation/` by hand.
+
+### Rolling your own
+
+The events carry enough to identify the grill and say something useful about
+it. Every one of them includes:
+
+| key | |
+|---|---|
+| `dsn` | the grill's serial |
+| `device_id` | its Home Assistant device — what a blueprint's device picker returns |
+| `device_name` | what it is called in the UI, following a rename |
+
+`cook_started`, `preheat_complete`, `cook_halftime` and `cook_done` add `mode`
+and `setpoint`; `cook_started` adds `seconds_set` and `smoke`; `cook_halftime`
+adds `seconds_left` and `seconds_set`; `cook_done` adds `reason` (`done` or
+`stopped`). The two probe events carry `probe_index` (0-based), `target` and
+`current` in °C.
 
 ```yaml
 automation:
   - alias: "Steaks ready"
-    trigger:
-      - platform: event
+    triggers:
+      - trigger: event
         event_type: ninja_woodfire_probe_target_reached
         event_data:
           probe_index: 0
-    action:
-      - service: notify.mobile_app
+    actions:
+      - action: notify.notify
         data:
           message: >
-            Probe 1 reached {{ trigger.event.data.target }}°C.
+            {{ trigger.event.data.device_name }}: probe 1 reached
+            {{ trigger.event.data.target }}°C.
 ```
+
+Events are suppressed while the snapshot is not live, deliberately: a grill
+that drops off the cloud mid-cook and reconnects reading "idle" would
+otherwise announce that food still raw is ready.
 
 ## License
 
