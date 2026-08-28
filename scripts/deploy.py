@@ -49,6 +49,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "custom_components" / "ninja_woodfire" / "manifest.json"
 ENV_FILE = ROOT / ".env.deploy"
 REPO = "SchubmannM/ninja-woodfire-integration"
+RELEASE_BRANCH = "main"
 
 
 def load_env() -> tuple[str, str]:
@@ -279,9 +280,23 @@ def main() -> int:
     tag = f"v{version}"
 
     if not args.restart_only and not args.no_release:
+        # Releasing from the wrong branch is an easy mistake once there are
+        # feature branches around, and it presents as a confusing "not clean"
+        # because another branch's files show up as untracked.
+        branch = run("git", "rev-parse", "--abbrev-ref", "HEAD")
+        if branch != RELEASE_BRANCH:
+            message = (f"on branch {branch!r}, not {RELEASE_BRANCH!r} — "
+                       f"releases come from {RELEASE_BRANCH}.\n"
+                       f"    git checkout {RELEASE_BRANCH}")
+            if args.dry_run:
+                print(f"    [dry-run] {message}")
+            else:
+                sys.exit(message)
+
         dirty = run("git", "status", "--porcelain")
         if dirty and not args.dry_run:
-            sys.exit("working tree is not clean — commit first:\n" + dirty)
+            sys.exit("working tree is not clean — commit or stash first:\n"
+                     + "\n".join(f"      {line}" for line in dirty.splitlines()))
         if dirty:
             print("    [dry-run] working tree is dirty; a real run would stop here")
 
