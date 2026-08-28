@@ -293,6 +293,17 @@ SENSORS: tuple[NinjaSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda s: s.grill.message or None,
     ),
+    # What the grill is asking the user to do right now: add the food, turn
+    # it, take it out. Not diagnostic — this is the appliance talking, and it
+    # is the only source for it. The cook-phase sensors never carry these:
+    # across a whole captured cook, `cook_state` went preheat -> heat -> none
+    # while the grill twice asked for a flip.
+    NinjaSensorDescription(
+        key="prompt",
+        translation_key="prompt",
+        value_fn=lambda s: s.grill.prompt or None,
+        attrs_fn=lambda s: {"event_mask": s.grill.event_mask},
+    ),
     # ---- Display-mirror sensors (only meaningful while cooking) ----
     NinjaSensorDescription(
         key="active_mode",

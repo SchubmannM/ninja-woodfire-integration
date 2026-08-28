@@ -152,13 +152,41 @@ real sub-phase is in `CookState.state.state`, which moves
 `preheat` (with `progress`) → `heat` → `none`.
 
 User-facing prompts arrive in `GrillState.message`, paired with an
-`eventmask` bitfield:
+`eventmask` bitfield.
+
+The number before the colon is the **bit index** into `eventmask`, which is a
+field of everything currently raised — so `4:flipfood` arrives with `0x10`
+(`1 << 4`), and `7:getfood` with `0xC0` because bit 6 (`done`) is still up
+alongside it.
 
 | `message` | `eventmask` | meaning |
 |-----------|-------------|---------|
-| `"1:addfood"` | `0x00` | add food (cook running) |
+| `"1:addfood"` | `0x02` | preheat has finished — put the food in |
+| `"4:flipfood"` | `0x10` | turn the food |
 | `"6:done"` | `0x40` | cook complete |
-| `"7:getfood"` | `0xC0` | remove food |
+| `"7:getfood"` | `0x80` (`0xC0` with `done`) | take the food out |
+
+Bits 0, 2, 3 and 5 have not been observed. `models.parse_prompt` reads the
+name rather than matching this table, so an unseen prompt still arrives under
+its own name.
+
+**The prompts are brief.** Observed on an OG900-EU: `flipfood` raised for 10
+and 12 seconds, `done` for 3, `addfood` for a little over three minutes.
+`message` returns to empty in between, so anything acting on a prompt has to
+react to the transition rather than wait for it to settle. The one-second poll
+of an active cook catches them comfortably.
+
+**`flipfood` lands exactly on the halfway tick** — in two captured cooks it
+was raised on the same second that `cook_progress` went 50 → 51.
+
+**`done` is not the end of the cook.** In one capture it was raised at
+10:34:07 with `CookState` momentarily `none`, and `heat` resumed three
+seconds later; the cook actually ended at 10:39:49. Use the grill state for
+that, which is what `EVENT_COOK_DONE` does.
+
+**The cook-phase sensors never carry these.** Across that whole cook
+`CookState.state` went `preheat → heat → none → heat → none` while the grill
+twice asked for a flip. `GrillState.message` is the only source.
 
 During preheat `secondsleft` stays pinned at `secondsset` and `endtimeutc`
 keeps sliding forward — the countdown only starts once preheat ends, so

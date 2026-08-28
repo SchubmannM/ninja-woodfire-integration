@@ -26,6 +26,9 @@ For a custom Lovelace card, see [ninja-woodfire-card](https://github.com/coxtor/
 - Live sensors: grill / air / smoke / probe temperatures, cook progress,
   preheat progress, end-time, active mode, current setpoint, lid state,
   per-probe status & target.
+- The grill's own prompts — *add the food*, *turn the food*, *take the food
+  out* — as `Prompt`, so you can be told what the appliance is asking for
+  rather than inferring it from the timer.
 - Cook controls: start, stop, skip-preheat. Mode-aware temperature
   number (heat-level for grill, °C for everything else). Duration,
   smoke, per-probe targets.
@@ -249,11 +252,16 @@ Click the button, confirm the URL, and fill in the form:
 
 [![Import the cook-notifications blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSchubmannM%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fcook_notifications.yaml)
 
-**Cook notifications** — preheat finished, halfway, food ready, meat probe at
-temperature. Pick your grill, tick what you want to hear about, done. The
-message text is written for you; the notification action defaults to
+**Cook notifications** — preheat finished, time to turn the food, food ready,
+meat probe at temperature. Pick your grill, tick what you want to hear about,
+done. The message text is written for you; the notification action defaults to
 `notify.notify` (every device signed in to Home Assistant) and can be swapped
 for one phone, a speaker announcement, or anything else.
+
+*Turn the food* is the grill's own prompt rather than a guess from the timer —
+it is raised on the tick cook progress crosses 50%. It needs the `Prompt`
+sensor picked in the blueprint's optional field, as do *add the food* and
+*take the food out*.
 
 [![Import the grill-alerts blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSchubmannM%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fgrill_alerts.yaml)
 

@@ -134,9 +134,11 @@ def test_cook_done_is_signalled_in_message_not_state() -> None:
     assert state.grill.seconds_left == 0
 
 
-def test_add_food_prompt() -> None:
-    state = _state("aws_add_food")
+def test_remove_food_prompt() -> None:
+    # Bit 7 (getfood) raised alongside bit 6 (done): 0x80 | 0x40.
+    state = _state("aws_get_food")
     assert state.grill.message == "7:getfood"
+    assert state.grill.prompt == "getfood"
     assert state.grill.event_mask == "0xC0"
 
 

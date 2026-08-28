@@ -2,7 +2,7 @@ blueprint:
   name: "Ninja Woodfire: cook notifications"
   description: >
     Push notifications for a cook on a Ninja Woodfire grill — preheat done,
-    halfway, food ready, meat probe at temperature.
+    time to turn the food, food ready, meat probe at temperature.
 
 
     Pick your grill, tick what you want to hear about, and you are finished:
@@ -43,6 +43,7 @@ blueprint:
         - preheat_complete
         - cook_done
         - probe_target_reached
+        - flipfood
       selector:
         select:
           multiple: true
@@ -60,6 +61,27 @@ blueprint:
               value: probe_target_reached
             - label: A meat probe has passed half its target temperature
               value: probe_halfway
+            - label: The grill asks you to put the food in
+              value: addfood
+            - label: The grill asks you to turn the food
+              value: flipfood
+            - label: The grill asks you to take the food out
+              value: getfood
+    prompt_sensor:
+      name: Prompt sensor
+      description: >
+        The grill's "Prompt" sensor, which carries what the appliance itself
+        is asking you to do. Required by the three "the grill asks you to…"
+        options above, and ignored by everything else — those come from an
+        entity rather than an event, so they cannot use the grill picker.
+        Leave it empty and those three simply never fire.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: ninja_woodfire
+              domain: sensor
     notify_action:
       name: How to notify
       description: >
@@ -97,15 +119,38 @@ triggers:
   - trigger: event
     event_type: ninja_woodfire_probe_halfway
     id: probe_halfway
+  # The grill's own prompts. Not events — they are a sensor, because they are
+  # state and because an entity is inspectable, testable without a cook, and
+  # needs none of the one-shot bookkeeping the cook events carry.
+  #
+  # `to:` each name rather than watching for any change: the prompt clears
+  # back to `unknown` a few seconds later, and the automation should fire on
+  # the grill raising it, not on it giving up.
+  - trigger: state
+    entity_id: !input prompt_sensor
+    to: "addfood"
+    id: addfood
+  - trigger: state
+    entity_id: !input prompt_sensor
+    to: "flipfood"
+    id: flipfood
+  - trigger: state
+    entity_id: !input prompt_sensor
+    to: "getfood"
+    id: getfood
 
 variables:
   grill: !input grill
   wanted: !input events
 
 conditions:
-  # Every grill fires these, so ignore the other one's.
+  # Every grill fires the events, so ignore the other one's. The prompt
+  # triggers are already tied to one grill by the entity that was picked, and
+  # carry no `trigger.event` to test.
   - condition: template
-    value_template: "{{ trigger.event.data.device_id == grill }}"
+    value_template: >-
+      {{ trigger.event is not defined
+         or trigger.event.data.device_id == grill }}
   - condition: template
     value_template: "{{ trigger.id in wanted }}"
 
@@ -118,7 +163,11 @@ actions:
       #
       # The grill names itself, and follows a rename in the UI. The name is
       # null until the device registry has caught up, hence the fallback.
-      grill_name: "{{ trigger.event.data.device_name or 'The grill' }}"
+      grill_name: >-
+        {%- set named = trigger.event.data.device_name if trigger.event is defined
+                        else device_attr(trigger.entity_id, 'name_by_user')
+                             or device_attr(trigger.entity_id, 'name') -%}
+        {{- named or 'The grill' -}}
       # The firmware's own mode spelling: "grill", "air crisp", "smoker".
       cook_mode: "{{ (trigger.event.data.mode or '') | title }}"
       # Probe events are 0-indexed; the grill's own display is not.
@@ -138,6 +187,12 @@ actions:
           {{ grill_name }} — {{ probe | lower }} halfway
         {%- elif trigger.id == 'cook_halftime' -%}
           {{ grill_name }} — halfway
+        {%- elif trigger.id == 'addfood' -%}
+          {{ grill_name }} — add the food
+        {%- elif trigger.id == 'flipfood' -%}
+          {{ grill_name }} — turn the food
+        {%- elif trigger.id == 'getfood' -%}
+          {{ grill_name }} — take the food out
         {%- else -%}
           {{ grill_name }} — cook started
         {%- endif -%}
@@ -159,6 +214,12 @@ actions:
           {{ probe }} has reached its target temperature.
         {%- elif trigger.id == 'probe_halfway' -%}
           {{ probe }} has passed half its target temperature.
+        {%- elif trigger.id == 'addfood' -%}
+          The grill is up to temperature and asking for the food.
+        {%- elif trigger.id == 'flipfood' -%}
+          Time to turn the food over.
+        {%- elif trigger.id == 'getfood' -%}
+          The grill is asking you to take the food out.
         {%- endif -%}
   # `choose: []` with only a default is the documented way to splice an
   # action-selector input into a sequence: the input's value is a *list* of

@@ -1,5 +1,5 @@
 {
-  "_note": "ADD FOOD prompt: message '7:getfood' + eventmask 0xC0.",
+  "_note": "REMOVE FOOD prompt at the end of a cook: message '7:getfood' with eventmask 0xC0 \u2014 bit 7 (getfood) raised alongside bit 6 (done). Despite the old filename this is not the add-food prompt; that one is '1:addfood' / 0x02, captured in aws_cooking.json.",
   "_source": "captured from a real OG900-EU via the SharkNinja AWS telemetry endpoint (devicesEndUserController); identifiers scrubbed, firmware JSON byte-preserved",
   "_transport": "aws",
   "device": {

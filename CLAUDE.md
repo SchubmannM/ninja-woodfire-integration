@@ -28,7 +28,7 @@ the integration will actually run on:
 ```bash
 mise install       # fetch the pinned Python, create .venv
 mise run install   # test deps + git hooks
-mise run test      # 124 tests, <1s, no HA needed
+mise run test      # 154 tests, <1s, no HA needed
 mise run check     # everything the pre-commit hooks check
 mise run compile   # syntax check without importing HA
 mise run deploy    # release + roll out to HA (see below)
@@ -237,6 +237,32 @@ Three more things about the YAML that are not obvious:
 
 Messages quote no probe temperature on purpose: the payload is always °C, and
 a household displaying °F would be told the wrong number.
+
+### The grill's own prompts
+
+`GrillState.message` carries what the appliance is asking the user to do, as
+`"<bit>:<name>"` paired with `eventmask` as a field of everything raised —
+`1:addfood` when preheat ends, `4:flipfood`, `6:done`, `7:getfood`.
+`models.parse_prompt` takes the name; `sensor.prompt` exposes it, and
+`sensor.message` keeps the raw string as a diagnostic.
+
+Three things about them, all learned from a captured cook and all easy to get
+wrong:
+
+- **The cook-phase sensors never carry these.** `CookState.state` went
+  `preheat → heat → none → heat → none` while the grill twice asked for a
+  flip. `message` is the only source, which is why the card's advisory banner
+  reads `sensor.prompt` first and treats `cook_state` as an Ayla-era fallback.
+- **They are brief** — `flipfood` for ten seconds, `done` for three — and
+  clear back to empty. Anything acting on one has to react to the transition.
+  Fine against the one-second poll of an active cook.
+- **`6:done` is not the end of the cook.** It was raised mid-cook with `heat`
+  resuming three seconds later. `EVENT_COOK_DONE` watches the grill state and
+  is the one to trust; only `addfood` / `flipfood` / `getfood` have no event
+  equivalent, and only those are wired to notifications.
+
+Parse tolerantly rather than against a table of four: half the bits have never
+been observed, and dropping an unseen prompt is worse than passing it through.
 
 ### Capabilities table
 

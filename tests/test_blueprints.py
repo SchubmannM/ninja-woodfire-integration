@@ -132,16 +132,70 @@ def test_the_constants_are_the_six_events_the_readme_promises() -> None:
     assert len(integration_event_names()) == 6
 
 
+def event_triggers(name: str = "cook_notifications") -> list[dict]:
+    return [t for t in load(name)["triggers"] if "event_type" in t]
+
+
+def prompt_triggers() -> list[dict]:
+    return [t for t in load("cook_notifications")["triggers"]
+            if t.get("trigger") == "state"]
+
+
 def test_cook_notifications_triggers_on_exactly_the_integration_events() -> None:
-    triggered = {t["event_type"] for t in load("cook_notifications")["triggers"]}
-    assert triggered == integration_event_names()
+    assert {t["event_type"] for t in event_triggers()} == integration_event_names()
 
 
 def test_trigger_ids_are_the_event_names_without_the_prefix() -> None:
     """Not cosmetic: the ids are also the values of the "notify me when"
     picker, so a mismatch silently disables that tick box."""
-    for trigger in load("cook_notifications")["triggers"]:
+    for trigger in event_triggers():
         assert trigger["id"] == trigger["event_type"].removeprefix(EVENT_PREFIX)
+
+
+# --------------------------------------------- the grill's own prompts
+
+def test_the_prompt_triggers_match_what_the_parser_produces() -> None:
+    """The blueprint waits for `to: "flipfood"`; the sensor reports whatever
+    `parse_prompt` returns. Those are two files apart, and a mismatch is a
+    notification that simply never arrives."""
+    from nwf_lib.models import parse_prompt
+
+    observed = {"1:addfood", "4:flipfood", "7:getfood"}
+    assert {t["to"] for t in prompt_triggers()} == {parse_prompt(m) for m in observed}
+
+
+def test_the_prompt_triggers_wait_for_the_prompt_not_for_it_to_clear() -> None:
+    """They are raised for as little as ten seconds and then go back to
+    `unknown`. `to:` the name; anything watching for a change would fire twice
+    and the second one would say nothing."""
+    for trigger in prompt_triggers():
+        assert trigger["to"] == trigger["id"], trigger
+        assert "from" not in trigger
+        assert trigger["entity_id"].name == "prompt_sensor"
+
+
+def test_done_is_not_wired_to_a_prompt() -> None:
+    """`6:done` was seen raised mid-cook with `heat` resuming three seconds
+    later. The grill-state event is the one that knows a cook is over."""
+    assert "done" not in {t["id"] for t in prompt_triggers()}
+
+
+def test_turning_the_food_is_on_by_default() -> None:
+    """The point of the whole exercise: the grill asks, twice a cook, and
+    until now nothing passed it on."""
+    assert "flipfood" in load("cook_notifications")["blueprint"]["input"]["events"]["default"]
+
+
+def test_the_device_filter_does_not_drop_the_prompt_triggers() -> None:
+    """It reads `trigger.event.data.device_id`, which a state trigger has not
+    got. Unguarded, every prompt notification would be silently discarded."""
+    condition = load("cook_notifications")["conditions"][0]["value_template"]
+    from_event = render(condition, trigger=Trigger("cook_done", {"device_id": "dev1"}),
+                        grill="dev1")
+    other_grill = render(condition, trigger=Trigger("cook_done", {"device_id": "dev2"}),
+                         grill="dev1")
+    from_prompt = render(condition, trigger=StateTrigger("flipfood"), grill="dev1")
+    assert (from_event, other_grill, from_prompt) == ("True", "False", "True")
 
 
 def test_the_picker_offers_every_event_and_defaults_to_a_sensible_subset() -> None:
@@ -188,6 +242,14 @@ class Trigger:
         self.event = type("Event", (), {"data": event_data or {}})()
         self.to_state = type("State", (), {"state": to_state})()
         self.from_state = type("State", (), {"state": from_state})()
+
+
+class StateTrigger:
+    """A state trigger: an entity_id and no `event` attribute whatsoever."""
+
+    def __init__(self, trigger_id: str, entity_id: str = "sensor.woodninja_prompt"):
+        self.id = trigger_id
+        self.entity_id = entity_id
 
 
 COOK_EVENT = {
@@ -274,6 +336,17 @@ def test_the_grill_names_itself_and_falls_back_when_it_cannot() -> None:
     for device_name, expected in [("WoodNinja", "WoodNinja"), (None, "The grill")]:
         data = {**COOK_EVENT, "device_name": device_name}
         assert render(variables["grill_name"], trigger=Trigger("cook_started", data)) == expected
+
+
+def test_a_prompt_notification_names_the_grill_from_its_entity() -> None:
+    """There is no event to read the name off, so it comes from the device
+    behind the sensor — and still follows a rename."""
+    variables = message_templates("cook_notifications")
+    assert render(variables["grill_name"], trigger=StateTrigger("flipfood"),
+                  _device={"name": "Ninja Woodfire", "name_by_user": "Patio grill"}) \
+        == "Patio grill"
+    assert render(variables["grill_name"], trigger=StateTrigger("flipfood"),
+                  _device={}) == "The grill"
 
 
 def test_probe_messages_are_one_indexed_like_the_grills_own_display() -> None:

@@ -83,6 +83,45 @@ class GrillTemps:
 
 # ---------------------------------------------------------------- grill state
 
+def parse_prompt(message: str) -> str:
+    """The name out of a firmware prompt like ``"4:flipfood"``.
+
+    User-facing prompts arrive in ``GrillState.message`` as ``"<bit>:<name>"``,
+    paired with ``eventmask`` as a bitfield of everything currently raised —
+    the number before the colon is the bit index, so ``4:flipfood`` comes with
+    ``0x10`` and ``7:getfood`` with ``0x80``. Only the name means anything to a
+    user; the index is recoverable from the mask if it ever matters.
+
+    Captured on an OG900-EU: ``1:addfood`` when preheat ends, ``4:flipfood`` at
+    the tick cook progress crosses 50%, ``6:done``, and ``7:getfood``. Parsed
+    tolerantly rather than against that list, so a prompt nobody has captured
+    yet still arrives under its own name instead of being dropped.
+
+    These are brief — ``flipfood`` was raised for ten seconds — which is fine
+    against the one-second poll of an active cook, but means anything watching
+    must react to the *transition*, not wait for the state to settle.
+
+    The name is canonicalised the way ``aws.normalise`` treats modes and
+    states: spaces and underscores dropped, casefolded. That function does
+    **not** touch ``message``, and no Ayla capture has ever carried a prompt —
+    every one of them is empty — so the Ayla spelling is unknown. This
+    firmware writes these same words both ways elsewhere (``"get food"`` and
+    ``"get_food"`` are both in ``ACTIVE_COOK_STATES``), and AWS stripping
+    ``"4:flip food"`` down to ``"4:flipfood"`` is exactly what the capture
+    looks like. One spelling out of both dialects means consumers match one
+    string, instead of a notification quietly never arriving on a grill that
+    was never migrated.
+    """
+    text = str(message or "").strip()
+    if not text:
+        return ""
+    _, sep, name = text.partition(":")
+    # Only fall back to the whole string when there was no index to strip;
+    # "4:" is a prompt with no name, not a prompt named "4:".
+    raw = name if sep else text
+    return raw.strip().replace(" ", "").replace("_", "").casefold()
+
+
 @dataclass
 class GrillState:
     """Consolidated grill state — what the grill display shows.
@@ -93,7 +132,8 @@ class GrillState:
 
     # Always present
     state: str = "unknown"           # idle | preheat | cooking | rest | done | …
-    message: str = ""
+    message: str = ""                # raw "<bit>:<name>", e.g. "4:flipfood"
+    prompt: str = ""                 # just the name — see parse_prompt
     event_mask: str = ""
     lid_open: bool = False
     sim: int = 0
@@ -119,6 +159,7 @@ class GrillState:
         return cls(
             state=str(d.get("state", "unknown")),
             message=str(d.get("message", "")),
+            prompt=parse_prompt(d.get("message", "")),
             event_mask=str(d.get("eventmask", "")),
             lid_open=bool(io.get("lid open", 0)),
             sim=int(d.get("sim", 0)),
