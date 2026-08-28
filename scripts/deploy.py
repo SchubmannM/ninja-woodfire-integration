@@ -197,18 +197,31 @@ class HA:
         )
 
     def find_update_entity(self) -> str | None:
-        """The HACS update entity for this integration."""
+        """The HACS update entity for this repository.
+
+        Matched on `release_url`, which HACS sets to the repository URL.
+        Matching on the entity name is ambiguous once the companion card is
+        also installed: this integration's entity is
+        `update.ninja_woodfire_update` and the card's is
+        `update.ninja_woodfire_grill_card_update`, so any substring rule loose
+        enough to find one will also match the other — and pick whichever the
+        state list happened to return first.
+        """
+        wanted = REPO.lower()
+        fallback = None
         for state in self.get("/api/states") or []:
             eid = state.get("entity_id", "")
             if not eid.startswith("update."):
                 continue
             attrs = state.get("attributes") or {}
-            haystack = (
-                f"{eid} {attrs.get('friendly_name', '')} {attrs.get('title', '')}"
-            ).lower()
-            if "ninja" in haystack and "woodfire" in haystack:
+            release_url = str(attrs.get("release_url") or "").lower()
+            if wanted in release_url:
                 return eid
-        return None
+            # Only used if no entity carries a release_url, which would mean
+            # an older HACS. Deliberately narrow to avoid the card.
+            if fallback is None and eid == "update.ninja_woodfire_update":
+                fallback = eid
+        return fallback
 
     def restart(self) -> None:
         """Ask Home Assistant to restart, tolerating the missing reply.
