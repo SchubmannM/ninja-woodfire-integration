@@ -31,6 +31,13 @@ class ModeCapability:
     temp_default: int = 0
     supports_smoke: bool = False
     smoke_default: bool = False
+    # Some modes do not merely default to smoke, they require it: the phone
+    # app greys the Woodfire toggle out and labels it ACTIVATED rather than
+    # offering it as a choice. Without this the integration will happily
+    # compose a combination the appliance does not offer, and then either the
+    # firmware rejects the cook or it smokes anyway while we report that it
+    # is not.
+    smoke_locked: bool = False
     supports_probe: bool = True
 
 
@@ -78,7 +85,7 @@ WOODFIRE_PRO_XL = GrillCapabilities(
             temp_min=55, temp_max=210,
             temp_default=110, duration_default_s=14400,    # 4 h
             duration_max_s=43200,                          # 12 h
-            supports_smoke=True, smoke_default=True,
+            supports_smoke=True, smoke_default=True, smoke_locked=True,
             supports_probe=True,
         ),
         ModeCapability(

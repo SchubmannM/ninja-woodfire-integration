@@ -1,7 +1,7 @@
 {
   "domain": "ninja_woodfire",
   "name": "Ninja Woodfire",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "documentation": "https://github.com/SchubmannM/ninja-woodfire-integration",
   "issue_tracker": "https://github.com/SchubmannM/ninja-woodfire-integration/issues",
   "codeowners": ["@SchubmannM"],

@@ -28,7 +28,7 @@ the integration will actually run on:
 ```bash
 mise install       # fetch the pinned Python, create .venv
 mise run install   # test deps + git hooks
-mise run test      # 154 tests, <1s, no HA needed
+mise run test      # 185 tests, <1s, no HA needed
 mise run check     # everything the pre-commit hooks check
 mise run compile   # syntax check without importing HA
 mise run deploy    # release + roll out to HA (see below)
@@ -264,6 +264,54 @@ wrong:
 Parse tolerantly rather than against a table of four: half the bits have never
 been observed, and dropping an unseen prompt is worse than passing it through.
 
+### Smoke is three states, not two
+
+`supports_smoke` / `smoke_default` / **`smoke_locked`**. The phone app greys
+the Woodfire toggle out in Smoker and labels it ACTIVATED — it is not offered
+as a choice there.
+
+**That is the whole of the evidence: no capture is in smoker mode.** All eight
+fixtures are Air Crisp or idle, so the flag rests on a screenshot rather than
+on the wire, exactly like the rest of this table. If the greying turns out to
+be app policy rather than firmware enforcement, the two errors are still not
+symmetric — locking wrongly costs a mode nobody asked for, while not locking
+lets the card report that the grill is not smoking while it is. One flag to
+reverse if a capture ever contradicts it. Without the third flag the integration would compose
+Smoker with smoke off, which the appliance does not do; the firmware either
+rejects the cook or smokes anyway while the card reports that it is not.
+
+Locked is honoured in three places, and the tests pin each: the switch is
+unavailable (as it already was where smoke is impossible — neither is the
+user's decision), `async_start_cook` forces the flag on, and
+`async_modify_cook` re-forces it when the mode changes mid-cook.
+
+**A locked mode must also default to smoke.** `select.py` snaps the staged
+value on a mode change using `smoke_default` alone, so locked-without-default
+would leave the staged setting reading off, the switch unavailable and
+therefore unfixable, and the payload sending on regardless. Enforced as an
+invariant test rather than worked around with a second clause.
+
+### The probe target carries more than a temperature
+
+`ProbeMode` has always parsed `mode` (`none | manual | preset`),
+`preset_index`, `protein`, `cut` and `doneness`. Nothing exposed them, so a
+preset cook resolved to a bare number and the rest was dropped — which is why
+no capture and no recorder history can say what a preset looks like on the
+wire. They are now attributes on `probeN_setpoint`.
+
+**Reported verbatim, with no label table.** The phone app shows Beef as
+"Rare 1 / Rare 2 / Med Rare 3 / Med Rare 4 / Med 5" against 42/44/47/50/53 °C
+and Chicken as a single "Well" at 74, but whether the firmware sends those
+indices, those names, or something else has never been observed, and
+`_parse_int_or_str` already accepts either. A mapping invented here would put
+a guess exactly where the evidence should go. A test asserts no such table
+appears. The card shows the preset only when the values read as words.
+
+Writing a preset is still not implemented: `_build_probe_payload` only ever
+sends `{"mode": "manual", "setpoint": N}`, and whether a preset is
+`{"mode": "preset", "preset_index": N}` or carries protein/cut/doneness
+separately is exactly the unknown these attributes exist to settle.
+
 ### Capabilities table
 
 `_lib/capabilities.py` maps `oem_model` → `GrillCapabilities` (per-mode temp
@@ -296,8 +344,16 @@ sets have different shapes, so never glob all fixtures into one parametrize.
 `hydrate()` builds a `CombinedState` from an Ayla fixture and `hydrate_aws()`
 from an AWS one, both rebasing the timestamp so liveness is deterministic.
 
-`coordinator.py` is the one HA module the suite does reach, via
-`load_coordinator()`. It imports four things from `homeassistant`, so `conftest`
+`coordinator.py` is reached via `load_coordinator()`, and the entity
+platforms via `load_platform("sensor")` / `("switch")` / `("select")` — with
+`description(module, key)` pulling one row out of a table. That matters:
+the behaviour of those modules lives in `value_fn` / `attrs_fn` /
+`available_fn` lambdas, and a test that restates one goes on passing after
+the lambda is deleted. The stub enums list exactly the members the
+integration uses and no more, so reaching for a constant Home Assistant does
+not have fails here rather than on somebody's grill.
+
+`coordinator.py` imports four things from `homeassistant`, so `conftest`
 stands those up (`FakeHass`, `FakeBus`, `FakeDeviceRegistry`) and
 registers the integration directory as `nwf_ha` — the same trick as `nwf_lib`,
 and for the same reason: it keeps `select.py` and friends off `sys.path`. That

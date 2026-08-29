@@ -369,7 +369,10 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 f"mode {self.cook_setting_mode!r} not supported by "
                 f"{self.capabilities.display_name}"
             )
-        smoke = self.cook_setting_smoke and mode.supports_smoke
+        # A locked mode takes smoke whatever the staged setting says — it is
+        # not a choice there, and sending 0 would compose a cook the appliance
+        # does not offer.
+        smoke = (mode.smoke_locked or self.cook_setting_smoke) and mode.supports_smoke
         probe_0 = (
             self._build_probe_payload(self.cook_setting_probe0_setpoint)
             if self.cook_setting_probe0_enabled and mode.supports_probe
@@ -588,6 +591,8 @@ class NinjaWoodfireCoordinator(DataUpdateCoordinator[CombinedState]):
                 new_temp = new_mode_caps.temp_default
             if not new_mode_caps.supports_smoke and new_smoke:
                 new_smoke = False
+            elif new_mode_caps.smoke_locked and not new_smoke:
+                new_smoke = True
             if new_seconds > new_mode_caps.duration_max_s:
                 new_seconds = new_mode_caps.duration_max_s
 

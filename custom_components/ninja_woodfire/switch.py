@@ -93,9 +93,14 @@ SWITCHES: tuple[NinjaSwitchDescription, ...] = (
         entity_category=EntityCategory.CONFIG,
         get_fn=lambda c: c.live_or_staged_smoke,
         set_fn=lambda c, v: setattr(c, "cook_setting_smoke", v),
+        # Unavailable both where smoke is impossible and where it is
+        # compulsory: neither is a decision the user gets to make, and the
+        # card dims the row so they can see why rather than pressing a switch
+        # that does nothing.
         available_fn=lambda c: (
             (m := c.capabilities.get_mode(c.live_or_staged_mode)) is not None
             and m.supports_smoke
+            and not m.smoke_locked
         ),
         post_set_fn=_modify_smoke,
     ),

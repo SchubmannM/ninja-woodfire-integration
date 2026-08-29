@@ -34,6 +34,36 @@ class NinjaSensorDescription(SensorEntityDescription):
     attrs_fn: Callable[[CombinedState], dict[str, Any]] | None = None
 
 
+def _probe_target_attrs(state: CombinedState, index: int) -> dict[str, Any] | None:
+    """How the probe target was set, beside the temperature it resolved to.
+
+    `ProbeMode` has always parsed these — `mode` is `none | manual | preset`,
+    and a preset carries `preset_index` plus `protein` / `cut` / `doneness`.
+    Nothing ever exposed them, so a preset cook resolved to a bare number and
+    the rest was dropped on the floor.
+
+    Reported verbatim, with no label table in front of them. The phone app
+    shows Beef as "Rare 1 / Rare 2 / Med Rare 3 / Med Rare 4 / Med 5" against
+    42/44/47/50/53 °C, and Chicken as a single "Well" at 74 — but whether the
+    firmware sends those indices, those names, or something else again has
+    never been captured. `models._parse_int_or_str` already accepts either.
+    Inventing a mapping here would put a guess where the evidence should go;
+    passing the raw values through means the next preset cook records what
+    the grill actually says.
+    """
+    probes = state.probes.probes
+    if index >= len(probes) or not probes[index].active:
+        return None
+    target = probes[index].target
+    return {
+        "target_mode": target.mode,
+        "preset_index": target.preset_index,
+        "protein": target.protein,
+        "cut": target.cut,
+        "doneness": target.doneness,
+    }
+
+
 _GRILL_LEVEL_LABELS = {1: "Lo", 2: "Med", 3: "Hi"}
 
 
@@ -258,6 +288,7 @@ SENSORS: tuple[NinjaSensorDescription, ...] = (
             if len(s.probes.probes) > 0 and s.probes.probes[0].active
             else None
         ),
+        attrs_fn=lambda s: _probe_target_attrs(s, 0),
     ),
     NinjaSensorDescription(
         key="probe1_setpoint",
@@ -270,6 +301,7 @@ SENSORS: tuple[NinjaSensorDescription, ...] = (
             if len(s.probes.probes) > 1 and s.probes.probes[1].active
             else None
         ),
+        attrs_fn=lambda s: _probe_target_attrs(s, 1),
     ),
     NinjaSensorDescription(
         key="probe0_state",

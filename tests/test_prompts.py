@@ -119,3 +119,111 @@ def test_parsing_does_not_depend_on_the_envelope() -> None:
     state = GrillState.from_property_value('{"state":"cooking","message":"4:flipfood"}')
     assert state.prompt == "flipfood"
     assert state.message == "4:flipfood", "the raw string is kept as-is"
+
+
+# ----------------------------------------------- how a probe target was set
+#
+# Reached through the real description table rather than a local copy of the
+# logic: `attrs_fn` is where the behaviour lives, and a test that restates it
+# goes on passing after the lambda is deleted.
+
+from .conftest import description, load_platform  # noqa: E402
+
+SENSOR = load_platform("sensor")
+
+
+def probe_target_attrs(state, index: int):
+    return description(SENSOR, f"probe{index}_setpoint").attrs_fn(state)
+
+
+def preset_probe(index: int = 0):
+    """A capture with a preset target grafted onto one probe.
+
+    No capture has one — the app's preset flow has never been run against a
+    grill while anybody was recording — so this is the shape `ProbeMode`
+    already parses, on top of a real cook.
+    """
+    state = hydrate_aws("aws_cooking")
+    probe = state.probes.probes[index]
+    probe.active = True
+    probe.target.mode = "preset"
+    probe.target.setpoint = 47
+    probe.target.preset_index = 3
+    probe.target.protein = "Beef"
+    probe.target.doneness = "MedRare"
+    return state
+
+
+def test_the_setpoint_sensors_carry_the_target_attributes() -> None:
+    for index in (0, 1):
+        assert description(SENSOR, f"probe{index}_setpoint").attrs_fn is not None
+
+
+def test_a_preset_target_keeps_every_field_the_firmware_sent() -> None:
+    """The point of surfacing these: a preset cook used to resolve to a bare
+    temperature and the rest was parsed and dropped, so not even the recorder
+    could say what a preset looks like on the wire."""
+    assert probe_target_attrs(preset_probe(), 0) == {
+        "target_mode": "preset", "preset_index": 3,
+        "protein": "Beef", "cut": None, "doneness": "MedRare",
+    }
+
+
+def test_a_manual_target_says_so_rather_than_leaving_it_blank() -> None:
+    state = hydrate_aws("aws_cooking")
+    probe = state.probes.probes[0]
+    probe.active = True
+    probe.target.mode = "manual"
+    probe.target.setpoint = 63
+    assert probe_target_attrs(state, 0) == {
+        "target_mode": "manual", "preset_index": None,
+        "protein": None, "cut": None, "doneness": None,
+    }
+
+
+def test_the_fields_survive_as_numbers_too() -> None:
+    """`_parse_int_or_str` accepts either, because which one this firmware
+    sends has never been captured — the phone app shows Beef as "Med Rare 3"
+    against 47 °C, and that 3 could be the index or part of a label."""
+    from nwf_lib.models import ProbeMode
+
+    t = ProbeMode.from_dict({"mode": "preset", "protein": 2, "doneness": 3})
+    assert (t.protein, t.doneness) == (2, 3)
+
+    state = preset_probe()
+    state.probes.probes[0].target.protein = 2
+    state.probes.probes[0].target.doneness = 3
+    attrs = probe_target_attrs(state, 0)
+    assert (attrs["protein"], attrs["doneness"]) == (2, 3)
+
+
+def test_an_inactive_probe_reports_no_target_at_all() -> None:
+    """The attributes hang off the setpoint sensor, whose own value is None
+    unless the cook is using that probe. They have to agree, or the card shows
+    a doneness for a probe that is not in anything."""
+    state = hydrate_aws("aws_cooking")
+    assert state.probes.probes[0].active is False
+    assert probe_target_attrs(state, 0) is None
+    assert description(SENSOR, "probe0_setpoint").value_fn(state) is None
+
+
+def test_a_probe_the_model_does_not_have_is_not_an_error() -> None:
+    state = preset_probe()
+    state.probes.probes = state.probes.probes[:1]
+    assert probe_target_attrs(state, 1) is None
+
+
+def test_nothing_invents_a_label_for_an_index() -> None:
+    """Deliberate: passing the raw values through is what makes the next
+    preset cook self-documenting. A guessed mapping would put an assumption
+    exactly where the evidence is supposed to go."""
+    import pathlib
+
+    source = (pathlib.Path(__file__).resolve().parents[1]
+              / "custom_components" / "ninja_woodfire" / "sensor.py").read_text()
+    body = source[source.index("def _probe_target_attrs"):source.index("_GRILL_LEVEL_LABELS")]
+    # Past the docstring, which cites the app's labels as evidence.
+    assert body.count('"""') == 2, "expected exactly one docstring"
+    code = body.rsplit('"""', 1)[1]
+    for guess in ("Rare", "MedRare", "Med Rare", "Beef", "Chicken", "Well"):
+        assert guess not in code, guess
