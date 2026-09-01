@@ -142,6 +142,103 @@ so cook commands keep using the spelling the firmware expects.
 | `"powered OFF"` (state) | `"poweredOFF"` |
 | `"get food"` (state) | `"getfood"` |
 
+## Temperature units
+
+**The payload mixes units, and neither backend says so anywhere.**
+
+| Block | Unit | Fields |
+|---|---|---|
+| `GrillState.inputs.temps` | **Fahrenheit** | `grill`, `air`, `smoke`, `probe0_a/b`, `probe1_a/b` |
+| `GrillState.setpoint` | **Celsius** | the cook target (heat level 1/2/3 in `grill` mode) |
+| `ProbeState.probes[].temp` | **Celsius** | measured probe temperature |
+| `ProbeState.probes[].mode.setpoint` | **Celsius** | probe target |
+| `GrillState.inputs.temps.main` / `.ui` | *neither* | PCB ADC counts, constant at 6542.4 / 6513.6 |
+
+`_lib/models.py::GrillTemps.from_wire` converts the Fahrenheit block on the
+way in, so `CombinedState` is Celsius throughout and entities need no unit
+logic. `FAHRENHEIT_TEMP_FIELDS` is the list; nothing keys off the magnitude
+of a reading.
+
+### How the boundary was established
+
+One snapshot settles it without any argument from plausible magnitudes.
+`tests/fixtures/aws_bake_probe_ambient.json` was taken with a meat probe
+plugged in and its tip in open room air, and it carries **the same
+measurement twice**:
+
+```json
+"inputs": {"temps": {"probe1_a": 80, "probe1_b": 80, ...}}     // Fahrenheit
+"probes": [{"name": "probe0", "pluggedin": 1, "temp": 26.6}]   // Celsius
+```
+
+80 °F is 26.67 °C. Two further live samples reconciled the same way (82 ↔
+27.7, 81 ↔ 27.2). The firmware converts for the block a human reads and
+leaves the sensor block in the scale the MCU works in — which is also why
+`setpoint`, the number the user dialled in, is Celsius sitting right beside a
+Fahrenheit `inputs.temps`.
+
+Both ends of the scale agree. A Bake at a 160 °C setpoint held `air` between
+294.6 and 339.4 over a full thermostat cycle — 145.9 °C to 170.8 °C either
+side of target, and unreachable as Celsius. A grill idle and offline for 23
+hours reported `grill` 79.5 / `air` 76.6, which is 26.4 °C / 24.8 °C: room
+temperature.
+
+### There is no unit flag to read
+
+Checked exhaustively, because reading a flag would beat hard-coding a list:
+
+* **Ayla property objects** carry a fixed 24-key schema — `ack_enabled`,
+  `app_type`, `base_type`, `data_updated_at`, `denied_roles`, `derived`,
+  `device_key`, `direction`, `display_name`, `generated_at`,
+  `generated_from`, `host_sw_version`, `key`, `name`, `passthrough`,
+  `product_name`, `read_only`, `recipe`, `retention_days`, `scope`,
+  `time_series`, `track_only_changes`, `type`, `value`. None is a unit.
+  `base_type` is a JSON type; `display_name` is prose ("Air Temperature").
+* **The per-property endpoint** `/apiv1/dsns/{dsn}/properties/{name}.json`
+  returns exactly the same keys as the list endpoint — no extra metadata.
+  `/template.json` and `/catalog.json` are 404 for an end-user token.
+* Every temperature property has `derived: false` and `generated_from:
+  null`, so there is no server-side conversion recipe to inspect either.
+* **The Ayla device record** has no unit or locale field.
+* **AWS** `metadata` is `{"deviceName": …}`, and the device shadow's only
+  properties are `Cloud_Mode`, `Cook_Command`, `Cook_Notifications`,
+  `Exec_Command` and `user_linked`.
+
+### Ayla declares scalar temperature properties it never populates
+
+The full property list (48 entries, against the 3 the integration reads)
+includes `GET_Temp_Air`, `GET_Temp_Grill`, `GET_Temp_MainPCB`,
+`GET_Temp_UIPCB`, `GET_Probe1_Temp`, `GET_Probe2_Temp` — and also
+`GET_CombinedState`, `GET_CookDefaults`, `GET_Lid_Open`, `GET_Error_Code`,
+`GET_Estimated_End_Time`. **All of them have `value: null` and
+`data_updated_at: "null"`**: declared in the device template, never written
+by this firmware. They are not an alternative, already-converted source, and
+they carry no unit metadata either. Only 16 properties have ever reported,
+and the three state blobs are the only useful ones.
+
+### What is not established
+
+* **Whether an NA grill reports `setpoint` in Fahrenheit.** The sensor block
+  is a raw MCU scale and there is no mechanism in the protocol by which it
+  could vary per account — there is no unit field for the firmware to key
+  off. `setpoint` is different: it is the number shown on the appliance, and
+  on a US model that display is Fahrenheit. Only an EU OG900-EU has been
+  captured. This is a pre-existing exposure, not one this change introduces —
+  `capabilities.py` already declares every range in °C — but it is the thing
+  to check first if an NA user reports nonsense setpoints.
+* **What `smoke` actually measures.** It never reads below ~227 °F (108 °C),
+  including on a grill switched off at the socket for 23 hours, so it carries
+  a large offset or is an unpopulated channel. It is converted with its block
+  because it sits in that block, but no capture has ever had the Woodfire box
+  lit (`smoke: 0` in all of them), so its behaviour when it matters is
+  unobserved. `temp_is_plausible` hides it unless smoke is on.
+* **Whether `inputs.temps.probeN_*` is off by one against `ProbeState`.** A
+  probe reported as `ProbeState.probes[0]` showed its raw elements in
+  `probe1_a`/`probe1_b`, with `probe0_a`/`probe0_b` at zero. Only one probe
+  has ever been plugged in at a time, so socket-to-index mapping is
+  unresolved. It does not currently matter: nothing consumes `probeN_a/b`,
+  because `ProbeInfo.temp` is the firmware's own average of them in Celsius.
+
 ## Cook lifecycle, as observed
 
 Captured live through an Air Crisp cook (150 °C, 3 min). Fixtures for each

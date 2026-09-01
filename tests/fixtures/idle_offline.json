@@ -1,5 +1,5 @@
 {
-  "_note": "Idle grill, module offline for ~23h: last cloud datapoint is the snapshot pushed on the grill's previous connect. Reproduces the original bug report.",
+  "_note": "Idle grill, module offline for ~23h: last cloud datapoint is the snapshot pushed on the grill's previous connect. Reproduces the original bug report. Also the ambient anchor for the unit question: grill 79.5 / air 76.6 are Fahrenheit, i.e. 26.4 C / 24.8 C, which is what a cold appliance in a room reads. smoke 227.1 (108.4 C) is not ambient in either unit - that channel is unexplained.",
   "_source": "captured from a real OG900-EU (Ninja Woodfire Pro Connect XL); DSN/MAC/IP scrubbed, firmware JSON byte-preserved",
   "device": {
     "oem_model": "OG900-EU",

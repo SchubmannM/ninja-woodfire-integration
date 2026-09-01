@@ -28,7 +28,7 @@ the integration will actually run on:
 ```bash
 mise install       # fetch the pinned Python, create .venv
 mise run install   # test deps + git hooks
-mise run test      # 185 tests, <1s, no HA needed
+mise run test      # 208 tests, <1s, no HA needed
 mise run check     # everything the pre-commit hooks check
 mise run compile   # syntax check without importing HA
 mise run deploy    # release + roll out to HA (see below)
@@ -110,6 +110,51 @@ space** — from object keys *and* enum values (`"secondsset"`, `"lidopen"`,
 spelling before anything else sees it, so `models.py`, the capability tables and
 the cook-command payloads all use one vocabulary. Add a new multi-word mode or
 state and it needs an entry there.
+
+### Temperature units — the payload mixes them
+
+**One firmware payload, two unit conventions, and no flag anywhere that says
+so.** Getting this wrong made the integration report roughly double: a Bake at
+160 °C showed the air chamber at 321 °C.
+
+| Block | Unit |
+|---|---|
+| `GrillState.inputs.temps` (`grill`, `air`, `smoke`, `probeN_a/b`) | **Fahrenheit** |
+| `GrillState.setpoint` | **Celsius** |
+| `ProbeState.probes[].temp` and `.mode.setpoint` | **Celsius** |
+| `inputs.temps.main` / `.ui` | neither — PCB ADC counts |
+
+`GrillTemps.from_wire` converts the Fahrenheit block at parse time, so
+`CombinedState` is Celsius throughout and no entity does unit maths.
+`models.FAHRENHEIT_TEMP_FIELDS` is the list, and it is a **list, not a
+heuristic** — "assume Fahrenheit above 250" is unsafe in both directions and
+would change a reading's meaning as the grill heats.
+
+The rule is that the firmware converts for the block a human reads and leaves
+the sensor block in the MCU's own scale. `tests/fixtures/aws_bake_probe_ambient.json`
+proves it without any appeal to plausible magnitudes: a probe in open room air
+appears in *both* blocks at once, as `probe1_a: 80` and as `temp: 26.6`, and
+80 °F is 26.67 °C.
+
+**Converting `ProbeState.temp` is the obvious wrong fix.** It is already
+Celsius; converting it puts a probe in a warm kitchen at −3 °C.
+
+Neither cloud carries unit metadata: Ayla's property objects have a fixed
+24-key schema with no unit among them, the per-property endpoint returns
+nothing the list endpoint lacks, and AWS's `metadata` and device shadow have
+no unit property. Ayla *declares* `GET_Temp_Air`, `GET_Temp_Grill`,
+`GET_Probe1_Temp` and 29 other properties this firmware never writes — all
+`value: null`, so they are not a converted alternative source. Full write-up,
+including what is still unestablished (NA `setpoint`, what `smoke` measures,
+a possible probe-index off-by-one): `docs/AWS_API.md` § Temperature units.
+
+**This also repaired the plausibility gating.** `temp_is_plausible` hides a
+not-cooking grill's chamber reading above 50 °C as leftover heat. It was being
+fed Fahrenheit, so it hid every idle reading — an idle grill reports ambient,
+which is 26 °C, not the 79.5 the wire says. Three fixtures whose notes call
+their readings "leftovers from a previous cook" are captures of a cold
+appliance at room temperature. The only genuinely-hot-while-off capture is
+`aws_powered_off_lid_open` (96.3 °C), which is what now pins that cap.
 
 ## Architecture
 
@@ -377,7 +422,8 @@ subtle bugs found so far were caught by parsing a real payload, not by reasoning
   level 1/2/3 (Lo/Med/Hi); every other mode uses °C. The firmware reports an
   internal °C target even in grill mode, so `sensor._setpoint_display()`
   translates it back using the coordinator's staged level as a hint, with coarse
-  °C bucketing as fallback.
+  °C bucketing as fallback. Setpoints are °C on the wire; the *sensor* block is
+  Fahrenheit — see *Temperature units* above before touching either.
 - **`GrillState.state` reads `"cooking"` during preheat.** The real sub-phase is
   in `CookState.state.state` (`preheat` → `heat` → `none`). Use `_cook_phase()`.
 - **Translations are the real source of strings.** `translations/en.json` and

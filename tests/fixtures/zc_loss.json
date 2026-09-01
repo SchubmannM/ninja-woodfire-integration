@@ -1,5 +1,5 @@
 {
-  "_note": "Mains zero-cross lost ('zc loss' cook state) while the Wi-Fi module was still up - grill switched off at the socket.",
+  "_note": "Mains zero-cross lost ('zc loss' cook state) while the Wi-Fi module was still up - grill switched off at the socket. Chamber at ambient: 83.1 / 81.1 on the wire is Fahrenheit, i.e. 28.4 C / 27.3 C.",
   "_source": "captured from a real OG900-EU (Ninja Woodfire Pro Connect XL); DSN/MAC/IP scrubbed, firmware JSON byte-preserved",
   "device": {
     "oem_model": "OG900-EU",

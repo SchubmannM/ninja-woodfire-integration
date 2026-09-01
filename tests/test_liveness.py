@@ -20,7 +20,7 @@ import pytest
 
 from nwf_lib.models import ACTIVE_COOK_STATES, CombinedState
 
-from .conftest import hydrate, hydrate_as_captured
+from .conftest import hydrate, hydrate_as_captured, hydrate_aws
 
 
 # ------------------------------------------------- the reported bug, verbatim
@@ -107,10 +107,16 @@ def test_powered_off_is_covered_by_the_idle_temperature_cap() -> None:
     """Regression: the cap used to test `state == "idle"` only.
 
     The firmware also reports "powered OFF" (plugged in, control panel off),
-    and a real capture in that state carried a leftover 82.4 °C chamber
-    reading — which sailed straight through to HA as a live temperature.
+    and a chamber still cooling in that state sails straight through to HA as
+    a live temperature unless the cap covers the state as well.
+
+    Driven from the AWS capture rather than the Ayla one this used to use.
+    That fixture reads 82.4 on the wire, which was taken for 82.4 °C of
+    leftover heat and is really 28.0 °C — a cold grill. It could not fail if
+    the cap were removed, so it was never testing the cap. This capture was
+    taken moments after a cook and is genuinely hot: 205.3 °F = 96.3 °C.
     """
-    state = hydrate("powered_off", online=True, age_seconds=0)
+    state = hydrate_aws("aws_powered_off_lid_open", online=True, age_seconds=0)
     assert state.grill.state == "powered OFF"
     assert state.grill.temps.grill > 50
     assert state.temp_is_plausible(state.grill.temps.grill, "grill") is False

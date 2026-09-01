@@ -63,16 +63,54 @@ def test_idle_offline_snapshot() -> None:
     assert state.cook.progress is None
     assert state.grill.lid_open is False
     assert all(not p.plugged_in and not p.active for p in state.probes.probes)
-    # Leftover chamber temps from the previous cook are still being served.
-    assert state.grill.temps.grill == pytest.approx(79.5)
-    assert state.grill.temps.smoke == pytest.approx(227.1)
+    # The chamber readings, normalised out of the wire's Fahrenheit. The
+    # payload says 79.5 / 76.6; that is 26.4 °C / 24.8 °C — a grill sitting
+    # in a room, which is exactly what a grill idle for 23 hours should read.
+    assert state.grill.temps.grill == pytest.approx(26.4)
+    assert state.grill.temps.air == pytest.approx(24.8)
+    # smoke reads 227.1 on the wire = 108.4 °C, which no grill that has been
+    # off for a day is. Converted with its block, but not to be trusted —
+    # see GrillTemps.
+    assert state.grill.temps.smoke == pytest.approx(108.4)
 
 
-def test_idle_leftover_temps_are_suppressed() -> None:
-    """An idle grill must not report last-cook temperatures as live."""
+def test_idle_ambient_temps_are_reported() -> None:
+    """A cold idle grill reports ambient, and ambient is a real reading.
+
+    This asserted the opposite until the Fahrenheit bug was found. The
+    thinking was that 79.5 had to be leftover heat from an earlier cook,
+    because 79.5 °C on an idle grill is absurd — so the plausibility cap
+    suppressed it. It was never °C. It is 26.4 °C, the grill is simply in a
+    room, and there is nothing to hide.
+
+    The cap itself was always right; it was being fed the wrong unit.
+    `test_idle_hot_chamber_is_still_suppressed` covers what it is actually
+    for.
+    """
     state = _hydrate("idle_offline")
-    assert state.temp_is_plausible(state.grill.temps.grill, "grill") is False
+    assert state.grill.temps.grill < 50
+    assert state.temp_is_plausible(state.grill.temps.grill, "grill") is True
+    assert state.temp_is_plausible(state.grill.temps.air, "air") is True
+    # smoke stays hidden: 108.4 °C is over the ambient cap, which is the
+    # correct outcome for a channel that never reads lower than that.
     assert state.temp_is_plausible(state.grill.temps.smoke, "smoke") is False
+
+
+def test_idle_hot_chamber_is_still_suppressed() -> None:
+    """The cap's real job: a not-cooking grill whose chamber is genuinely hot.
+
+    None of the three Ayla captures is one — all were taken on a cold
+    appliance, which is why this needs the AWS capture made right after a
+    cook. 205.3 on the wire is 96.3 °C, a chamber still cooling, and the
+    cloud will serve it unchanged forever.
+    """
+    from .conftest import hydrate_aws
+
+    state = hydrate_aws("aws_powered_off_lid_open", online=True, age_seconds=0)
+    assert state.grill.state == "powered OFF"
+    assert state.grill.temps.grill == pytest.approx(96.3, abs=0.1)
+    assert state.grill.temps.grill > 50
+    assert state.temp_is_plausible(state.grill.temps.grill, "grill") is False
 
 
 # ------------------------------------------------------- powered off / zc loss
@@ -85,15 +123,17 @@ def test_powered_off_state_parses() -> None:
     assert state.cook.state == "none"
 
 
-def test_powered_off_leftover_temps_are_suppressed() -> None:
-    """Same leftover-temperature problem as idle, different state string.
+def test_powered_off_chamber_is_at_ambient() -> None:
+    """"powered OFF" with a cold chamber — 82.4 on the wire is 28.0 °C.
 
-    The grill is not cooking, so its stale 82.4 C chamber reading must not
-    reach HA as a live temperature.
+    The fixture's own note calls this "leftovers from a previous cook
+    (grill 82.4C)". That reading of it was wrong: 82.4 is Fahrenheit, the
+    chamber is at room temperature, and there is nothing left over about it.
+    Suppression here would hide a true measurement.
     """
     state = _hydrate("powered_off")
-    assert state.grill.temps.grill > 50  # the stale reading is really there
-    assert state.temp_is_plausible(state.grill.temps.grill, "grill") is False
+    assert state.grill.temps.grill == pytest.approx(28.0)
+    assert state.temp_is_plausible(state.grill.temps.grill, "grill") is True
 
 
 def test_zc_loss_cook_state() -> None:

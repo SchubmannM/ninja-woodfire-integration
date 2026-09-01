@@ -1,5 +1,5 @@
 {
-  "_note": "Grill plugged in but control panel off ('powered OFF'). Temps are leftovers from a previous cook (grill 82.4C) and must not be shown as live.",
+  "_note": "Grill plugged in but control panel off ('powered OFF'). The chamber is COLD: 82.4 on the wire is Fahrenheit, i.e. 28.0 C, room temperature. This note used to read 'leftovers from a previous cook (grill 82.4C)' - that was the unit bug talking, and the reading is a true live ambient measurement. For a genuinely hot not-cooking chamber see aws_powered_off_lid_open.json.",
   "_source": "captured from a real OG900-EU (Ninja Woodfire Pro Connect XL); DSN/MAC/IP scrubbed, firmware JSON byte-preserved",
   "device": {
     "oem_model": "OG900-EU",

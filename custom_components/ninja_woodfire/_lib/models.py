@@ -58,16 +58,97 @@ def _parse_value(raw: Any) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- temps
+#
+# Unit handling. Neither backend states the unit of anything, anywhere.
+#
+# Ayla's property objects carry a fixed 24-key schema — `base_type`,
+# `display_name`, `derived`, `direction`, … — and not one of those keys is a
+# unit. `base_type` is a JSON type (`integer`, `string`), `display_name` is
+# prose ("Air Temperature"), every temperature property has `derived: false`
+# and `generated_from: null`, and the per-property detail endpoint returns
+# exactly the same keys as the list endpoint. The device record has no unit
+# or locale field either, and on the AWS side neither `metadata`
+# (`{"deviceName": …}`) nor the device shadow — whose only properties are
+# `Cloud_Mode`, `Cook_Command`, `Cook_Notifications`, `Exec_Command` and
+# `user_linked` — carries one. There is no flag to read, so the unit of each
+# field is protocol knowledge that has to be recorded here.
+#
+# And the payload mixes units. The firmware publishes two blocks:
+#
+#   * `GrillState.inputs.temps` — the **raw sensor block, in Fahrenheit**.
+#   * `ProbeState.probes[]` and `GrillState.setpoint` — the **user-facing
+#     values, already in Celsius**.
+#
+# That is not inferred from magnitudes. One captured snapshot
+# (`tests/fixtures/aws_bake_probe_ambient.json`) contains the *same physical
+# measurement in both blocks at once*: a probe resting in open room air reads
+# `inputs.temps.probe1_a = 80` and `ProbeState.probes[0].temp = 26.6`, and
+# 80 °F is 26.67 °C. Two further live samples reconciled the same way (82 ↔
+# 27.7, 81 ↔ 27.2). The firmware converts for the block a human reads and
+# leaves the sensor block in the scale the MCU works in.
+#
+# Everything else agrees. A Bake at a 160 °C setpoint held `air` between
+# 294.6 and 339.4 — 145.9 °C to 170.8 °C, a thermostat cycling either side of
+# its target, and unreachable as Celsius. A grill idle for 23 hours reported
+# `grill` 79.5 / `air` 76.6, which is 26.4 °C / 24.8 °C: room temperature.
+# Both ends of the scale land where physics says they should.
+#
+# This is why the integration reported roughly double: it took the raw block
+# at face value and labelled it CELSIUS.
+
+def fahrenheit_to_celsius(value: float) -> float:
+    """Convert one Fahrenheit reading to Celsius."""
+    return (value - 32.0) * 5.0 / 9.0
+
+
+# The keys inside `inputs.temps` that are Fahrenheit, named explicitly.
+#
+# A list, not a heuristic. "Assume Fahrenheit above 250" would be unsafe in
+# both directions — 200 °C is a legitimate Air Crisp target and 200 °F is a
+# legitimate warming one — and it would silently change a reading's meaning
+# as the grill heats. A field is on this list because it was observed, or
+# because it sits in a block whose unit was observed; nothing here depends on
+# the value.
+#
+# `main` and `ui` are deliberately absent. Ayla names them "Main PCB
+# Temperature" and "UI PCB Temperature", but they read 6542.4 and 6513.6 in
+# every capture ever taken — across both backends, idle, mid-cook and powered
+# off — never varying by so much as 0.1. They are PCB analog reads (ADC counts
+# × 0.1) that were given temperature-shaped names, and they are neither °F nor
+# °C.
+FAHRENHEIT_TEMP_FIELDS = frozenset({
+    "grill",
+    "air",
+    "smoke",
+    "probe0_a", "probe0_b",
+    "probe1_a", "probe1_b",
+})
+
 
 @dataclass
 class GrillTemps:
-    """Live temperature readings from the grill MCU.
+    """Live sensor readings from the grill MCU, **normalised to °C**.
 
-    grill/air/smoke are all in °C and reflect what the grill display shows.
-    probeN_a/probeN_b are dual-element raw probe readings (averaged into
-    the per-probe `temp` field).
-    main/ui are PCB analog reads, NOT temperatures despite the unit confusion
-    you'd think — values like 6542.4 are ADC counts × 0.1.
+    The wire format is Fahrenheit (see the note above); these fields are the
+    converted values, so everything downstream — entities, plausibility
+    gating, lifecycle events — works in one unit. `GrillState.raw` still
+    holds the untouched payload for diagnostics.
+
+    grill/air are the two chamber sensors. probeN_a/probeN_b are the raw
+    dual-element readings of each meat probe; nothing consumes them, because
+    the firmware already averages them into `ProbeInfo.temp` in Celsius, and
+    that is the value the integration exposes.
+
+    `smoke` is converted with its block, but is not a trustworthy reading.
+    It never falls below ~227 °F (108 °C), including on a grill switched off
+    at the socket for 23 hours, so it carries a large offset or is an
+    unpopulated channel. It has also never been captured with the Woodfire
+    box actually lit — every capture has `smoke: 0` — so what it does when it
+    matters is unobserved. `temp_is_plausible` hides it unless smoke is on,
+    which is the only reason exposing it at all is defensible.
+
+    main/ui are PCB ADC counts, not temperatures, and are passed through
+    untouched — see FAHRENHEIT_TEMP_FIELDS.
     """
 
     grill: float = 0.0
@@ -77,8 +158,38 @@ class GrillTemps:
     probe0_b: float = 0.0
     probe1_a: float = 0.0
     probe1_b: float = 0.0
-    main: float = 0.0  # PCB ADC, not °C
-    ui: float = 0.0    # PCB ADC, not °C
+    main: float = 0.0  # PCB ADC, not a temperature in any unit
+    ui: float = 0.0    # PCB ADC, not a temperature in any unit
+
+    @classmethod
+    def from_wire(cls, raw: dict[str, Any]) -> "GrillTemps":
+        """Parse one `inputs.temps` object, converting °F fields to °C.
+
+        The single place the Fahrenheit-to-Celsius step happens. Both
+        transports carry the same firmware structure, so doing it here covers
+        Ayla and AWS at once and means no entity ever sees a raw °F value.
+
+        Rounded to one decimal: that is the precision the firmware itself
+        uses for the Celsius values it publishes, and it keeps 26.666666666
+        out of the UI.
+        """
+        def read(name: str) -> float:
+            value = float(raw.get(name, 0) or 0)
+            if name in FAHRENHEIT_TEMP_FIELDS:
+                return round(fahrenheit_to_celsius(value), 1)
+            return value
+
+        return cls(
+            grill=read("grill"),
+            air=read("air"),
+            smoke=read("smoke"),
+            probe0_a=read("probe0_a"),
+            probe0_b=read("probe0_b"),
+            probe1_a=read("probe1_a"),
+            probe1_b=read("probe1_b"),
+            main=read("main"),
+            ui=read("ui"),
+        )
 
 
 # ---------------------------------------------------------------- grill state
@@ -142,7 +253,12 @@ class GrillState:
 
     # Only present when state != idle (None when idle)
     mode: str | None = None          # grill | smoker | bake | roast | broil | …
-    setpoint: int | None = None      # target value, semantics depend on mode
+    # Target value; semantics depend on mode (heat level 1/2/3 in `grill`
+    # mode, otherwise °C). Already Celsius on the wire — do NOT convert.
+    # A Bake the user set to 160 °C reports `setpoint: 160`, and the
+    # capability table's ranges (bake 120-210) are the same scale. This is
+    # the user-facing block; only `inputs.temps` is Fahrenheit.
+    setpoint: int | None = None
     seconds_set: int | None = None   # original cook duration in seconds
     seconds_left: int | None = None  # remaining time in seconds
     end_time_utc: int | None = None  # UNIX timestamp of cook end
@@ -163,17 +279,7 @@ class GrillState:
             event_mask=str(d.get("eventmask", "")),
             lid_open=bool(io.get("lid open", 0)),
             sim=int(d.get("sim", 0)),
-            temps=GrillTemps(
-                grill=float(temps_raw.get("grill", 0)),
-                air=float(temps_raw.get("air", 0)),
-                smoke=float(temps_raw.get("smoke", 0)),
-                probe0_a=float(temps_raw.get("probe0_a", 0)),
-                probe0_b=float(temps_raw.get("probe0_b", 0)),
-                probe1_a=float(temps_raw.get("probe1_a", 0)),
-                probe1_b=float(temps_raw.get("probe1_b", 0)),
-                main=float(temps_raw.get("main", 0)),
-                ui=float(temps_raw.get("ui", 0)),
-            ),
+            temps=GrillTemps.from_wire(temps_raw),
             mode=d.get("mode") if d.get("mode") else None,
             setpoint=int(d["setpoint"]) if "setpoint" in d else None,
             seconds_set=int(d["seconds set"]) if "seconds set" in d else None,
@@ -225,7 +331,12 @@ class ProbeMode:
     """Probe target — either manual setpoint or a doneness preset."""
 
     mode: str = "none"             # none | manual | preset
-    setpoint: int | None = None    # target temperature in °C (manual mode)
+    # Target temperature in °C (manual mode). Celsius in both directions:
+    # the integration writes `{"mode": "manual", "setpoint": N}` in °C, and
+    # this lives in `ProbeState`, the block the firmware publishes in °C.
+    # No capture has yet read back an *active* probe target, so the read
+    # path is consistent-by-block rather than directly observed.
+    setpoint: int | None = None
     preset_index: int | None = None
     protein: int | str | None = None     # ProteinKind enum or string: Beef|Poultry|Chicken|…
     cut: int | str | None = None
@@ -263,7 +374,13 @@ class ProbeInfo:
     name: str = ""                 # "probe0" or "probe1"
     plugged_in: bool = False
     active: bool = False           # True when a cook is using this probe
-    temp: float = 0.0              # current measured temp in °C
+    # Current measured probe temperature, **already °C on the wire** — do
+    # NOT convert. This is the firmware's own conversion of the raw
+    # elements in `GrillState.inputs.temps.probeN_a/b`, which are °F: a
+    # probe in open room air reported `probe1_a: 80` here as `temp: 26.6`.
+    # Converting this too was the obvious wrong fix; it would have read
+    # -3 °C for a probe sitting in a warm kitchen.
+    temp: float = 0.0
     progress: int = 0              # 0-100 progress towards setpoint
     target: ProbeMode = field(default_factory=ProbeMode)
     state: str = "none"            # cooking | done | none | get_food | flip_food | …
@@ -363,7 +480,11 @@ class CombinedState:
         """Whether a temperature reading should be shown.
 
         Args:
-            value: the raw °C reading.
+            value: the reading in °C. `GrillTemps.from_wire` has already
+                converted it out of the wire's Fahrenheit, so the 50 °C
+                ambient threshold below means what it says — before that
+                conversion existed it was silently comparing °F against it,
+                and hid every genuine idle reading as if it were stale.
             name: which sensor — "grill", "air", "smoke". Drives
                   per-mode plausibility (e.g. smoke chamber only
                   reports meaningfully when smoke=on; air chamber
