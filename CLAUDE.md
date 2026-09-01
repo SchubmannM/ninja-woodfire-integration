@@ -256,10 +256,13 @@ wrong:
 - **They are brief** — `flipfood` for ten seconds, `done` for three — and
   clear back to empty. Anything acting on one has to react to the transition.
   Fine against the one-second poll of an active cook.
-- **`6:done` is not the end of the cook.** It was raised mid-cook with `heat`
-  resuming three seconds later. `EVENT_COOK_DONE` watches the grill state and
-  is the one to trust; only `addfood` / `flipfood` / `getfood` have no event
-  equivalent, and only those are wired to notifications.
+- **`6:done` is not the end of the cook.** In one capture it was raised with
+  `heat` resuming three seconds later; in another the grill did not reach
+  `idle` for a further hundred seconds, with `7:getfood` arriving nine seconds
+  after `done` and mask `0xC0`. `EVENT_COOK_DONE` watches the grill state and
+  is the one to trust. Only `addfood` / `flipfood` / `getfood` have no event
+  equivalent, and only those are wired to notifications — `getfood` is the one
+  that actually means "go and take the food out".
 
 Parse tolerantly rather than against a table of four: half the bits have never
 been observed, and dropping an unseen prompt is worse than passing it through.

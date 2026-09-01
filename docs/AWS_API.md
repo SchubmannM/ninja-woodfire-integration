@@ -170,11 +170,23 @@ Bits 0, 2, 3 and 5 have not been observed. `models.parse_prompt` reads the
 name rather than matching this table, so an unseen prompt still arrives under
 its own name.
 
-**The prompts are brief.** Observed on an OG900-EU: `flipfood` raised for 10
-and 12 seconds, `done` for 3, `addfood` for a little over three minutes.
-`message` returns to empty in between, so anything acting on a prompt has to
-react to the transition rather than wait for it to settle. The one-second poll
-of an active cook catches them comfortably.
+**The prompts are brief, and not equally so.** Observed on an OG900-EU:
+`flipfood` for 10 and 12 seconds, `done` for 9, `getfood` for 91, `addfood`
+for several minutes. `message` returns to empty in between, so anything acting
+on a prompt has to react to the transition rather than wait for it to settle.
+The one-second poll of an active cook catches even the shortest comfortably.
+
+**`eventmask` outlives `message`.** At the end of one cook the message cleared
+to empty while the mask still read `0x40`, and only dropped to `0x00` half a
+minute later. The mask is what is currently raised; the message is what is
+currently being *said*. `sensor.prompt` follows the message, which is the one
+that maps to "tell the user something now".
+
+**`flipfood` looks mode-dependent.** Both captures of it are Grill cooks. Two
+full Air Crisp cooks watched end to end raised `addfood`, `done` and
+`getfood` and never asked for a flip — which is plausible enough for a basket
+you do not turn food in, but it means a quiet Air Crisp cook is not evidence
+of anything broken.
 
 **`flipfood` lands exactly on the halfway tick** — in two captured cooks it
 was raised on the same second that `cook_progress` went 50 → 51.
@@ -187,6 +199,10 @@ that, which is what `EVENT_COOK_DONE` does.
 **The cook-phase sensors never carry these.** Across that whole cook
 `CookState.state` went `preheat → heat → none → heat → none` while the grill
 twice asked for a flip. `GrillState.message` is the only source.
+
+It is not that `CookState.state` reports nothing but phases — a later cook
+showed it going to `lid open` and back four times as the lid was worked. It
+simply never carries the food prompts.
 
 During preheat `secondsleft` stays pinned at `secondsset` and `endtimeutc`
 keeps sliding forward — the countdown only starts once preheat ends, so
