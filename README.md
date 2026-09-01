@@ -252,16 +252,28 @@ Click the button, confirm the URL, and fill in the form:
 
 [![Import the cook-notifications blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSchubmannM%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fcook_notifications.yaml)
 
-**Cook notifications** — preheat finished, time to turn the food, food ready,
-meat probe at temperature. Pick your grill, tick what you want to hear about,
-done. The message text is written for you; the notification action defaults to
+**Cook notifications** — preheat finished, add the food, time to turn it, meat
+probe at temperature. Pick your grill, tick what you want to hear about, done.
+The message text is written for you; the notification action defaults to
 `notify.notify` (every device signed in to Home Assistant) and can be swapped
 for one phone, a speaker announcement, or anything else.
 
-*Turn the food* is the grill's own prompt rather than a guess from the timer —
-it is raised on the tick cook progress crosses 50%. It needs the `Prompt`
-sensor picked in the blueprint's optional field, as do *add the food* and
-*take the food out*.
+*Add the food* and *turn the food* are the grill's own prompts rather than
+guesses from the timer, so they need the `Prompt` sensor picked in the
+optional field. *Turn the food* is raised on the tick cook progress crosses
+50% — on **grill** cooks. Bake and air crisp never ask for a flip, so silence
+there is the appliance, not a fault.
+
+[![Import the cook-finished blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSchubmannM%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fcook_finished.yaml)
+
+**Food is ready** — the end of a cook, once. This is separate because the
+grill announces the end *twice*: `7:getfood` about ten seconds after `6:done`,
+then the `cook_done` event when the state finally goes idle, which is however
+long the food sits before you shut the grill. Neither is reliable alone — one
+captured grill cook raised no `getfood` at all, and `cook_done` is always the
+late one — so both trigger and `mode: single` lets the first one win. That
+mode is why it cannot live in the blueprint above: it would swallow every
+other notification too.
 
 [![Import the grill-alerts blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSchubmannM%2Fninja-woodfire-integration%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fninja_woodfire%2Fgrill_alerts.yaml)
 
@@ -275,7 +287,7 @@ connected*, which is the only thing that catches a migrated grill: those stay
 connected while their data freezes (see [Why this
 matters](#why-this-matters)), so connectivity never drops at all.
 
-Both live in [`blueprints/automation/ninja_woodfire/`](blueprints/automation/ninja_woodfire/);
+All three live in [`blueprints/automation/ninja_woodfire/`](blueprints/automation/ninja_woodfire/);
 you can also copy them into `<config>/blueprints/automation/` by hand.
 
 ### Rolling your own

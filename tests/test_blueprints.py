@@ -75,7 +75,7 @@ def declared_inputs(blueprint: dict) -> set[str]:
     return names
 
 
-ALL = ["cook_notifications", "grill_alerts"]
+ALL = ["cook_notifications", "cook_finished", "grill_alerts"]
 
 
 # ------------------------------------------------------------------ structure
@@ -114,10 +114,21 @@ def test_every_trigger_has_an_id(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", ALL)
-def test_the_notification_action_is_the_last_step(name: str) -> None:
-    actions = load(name)["actions"]
-    assert isinstance(actions[-1]["default"], Input)
-    assert actions[-1]["choose"] == []
+def test_the_notification_action_is_spliced_in(name: str) -> None:
+    """`choose: [] / default: !input` is how an action-selector input goes into
+    a sequence — the value is a list, and a bare `- !input` would nest one."""
+    step = next(a for a in load(name)["actions"] if "choose" in a)
+    assert isinstance(step["default"], Input)
+    assert step["choose"] == []
+
+
+def test_only_the_end_of_cook_blueprint_holds_a_lock_afterwards() -> None:
+    """Everything else notifies and finishes. `cook_finished` keeps running so
+    that `mode: single` discards the partner signal."""
+    for name in ALL:
+        actions = load(name)["actions"]
+        holds = any("wait_for_trigger" in a or "delay" in a for a in actions)
+        assert holds == (name == "cook_finished"), name
 
 
 # ------------------------------------- the event names, against the constants
@@ -141,8 +152,25 @@ def prompt_triggers() -> list[dict]:
             if t.get("trigger") == "state"]
 
 
-def test_cook_notifications_triggers_on_exactly_the_integration_events() -> None:
-    assert {t["event_type"] for t in event_triggers()} == integration_event_names()
+def test_between_them_the_blueprints_cover_every_integration_event() -> None:
+    """Split across two files, so neither alone is the whole set — but an event
+    added to `const.EVENT_*` and wired into neither would otherwise be a
+    notification nobody ever gets."""
+    covered = {t["event_type"] for name in ALL for t in event_triggers(name)}
+    assert covered == integration_event_names()
+
+
+def test_the_end_of_a_cook_lives_in_its_own_blueprint() -> None:
+    """Both end-of-cook signals have to be on the same automation for
+    `mode: single` to collapse them, and that mode cannot be applied to the
+    one carrying every other notification."""
+    assert {t["event_type"] for t in event_triggers("cook_finished")} == {
+        "ninja_woodfire_cook_done"}
+    assert "getfood" in {t.get("id") for t in load("cook_finished")["triggers"]}
+
+    during = load("cook_notifications")
+    ids = {t.get("id") for t in during["triggers"]}
+    assert not ids & {"cook_done", "getfood"}, "the duplicate is back"
 
 
 def test_trigger_ids_are_the_event_names_without_the_prefix() -> None:
@@ -154,6 +182,12 @@ def test_trigger_ids_are_the_event_names_without_the_prefix() -> None:
 
 # --------------------------------------------- the grill's own prompts
 
+def all_prompt_triggers() -> list[dict]:
+    return [t for name in ALL for t in load(name)["triggers"]
+            if t.get("trigger") == "state" and t.get("entity_id") is not None
+            and getattr(t["entity_id"], "name", "") == "prompt_sensor"]
+
+
 def test_the_prompt_triggers_match_what_the_parser_produces() -> None:
     """The blueprint waits for `to: "flipfood"`; the sensor reports whatever
     `parse_prompt` returns. Those are two files apart, and a mismatch is a
@@ -161,23 +195,22 @@ def test_the_prompt_triggers_match_what_the_parser_produces() -> None:
     from nwf_lib.models import parse_prompt
 
     observed = {"1:addfood", "4:flipfood", "7:getfood"}
-    assert {t["to"] for t in prompt_triggers()} == {parse_prompt(m) for m in observed}
+    assert {t["to"] for t in all_prompt_triggers()} == {parse_prompt(m) for m in observed}
 
 
 def test_the_prompt_triggers_wait_for_the_prompt_not_for_it_to_clear() -> None:
     """They are raised for as little as ten seconds and then go back to
     `unknown`. `to:` the name; anything watching for a change would fire twice
     and the second one would say nothing."""
-    for trigger in prompt_triggers():
+    for trigger in all_prompt_triggers():
         assert trigger["to"] == trigger["id"], trigger
         assert "from" not in trigger
-        assert trigger["entity_id"].name == "prompt_sensor"
 
 
 def test_done_is_not_wired_to_a_prompt() -> None:
     """`6:done` was seen raised mid-cook with `heat` resuming three seconds
     later. The grill-state event is the one that knows a cook is over."""
-    assert "done" not in {t["id"] for t in prompt_triggers()}
+    assert "done" not in {t["id"] for t in all_prompt_triggers()}
 
 
 def test_turning_the_food_is_on_by_default() -> None:
@@ -269,7 +302,6 @@ COOK_EVENT = {
         "cook_started",
         "preheat_complete",
         "cook_halftime",
-        "cook_done",
         "probe_target_reached",
         "probe_halfway",
     ],
@@ -319,16 +351,54 @@ def test_the_cook_notification_branches_are_all_different(part: str) -> None:
     assert len(set(seen.values())) == len(seen), seen
 
 
+# ------------------------------------------------- the end, exactly once
+
+def finished(trigger, **extra):
+    """Render `cook_finished`'s title and message for one trigger."""
+    v = message_templates("cook_finished")
+    ctx = {"trigger": trigger, "grill_name": "WoodNinja", **extra}
+    ctx["stopped"] = render(v["stopped"], **ctx) == "True"
+    return render(v["title"], **ctx), render(v["message"], **ctx)
+
+
+def test_a_finished_cook_says_the_food_is_ready() -> None:
+    for trigger in (StateTrigger("getfood"),
+                    Trigger("cook_done", {**COOK_EVENT, "reason": "done"})):
+        title, message = finished(trigger)
+        assert title == "WoodNinja — food is ready"
+        assert "go and get your food" in message
+
+
+def test_both_end_signals_say_exactly_the_same_thing() -> None:
+    """They are the same event as far as the user is concerned — whichever
+    arrives first speaks, so they must not read differently."""
+    early = finished(StateTrigger("getfood"))
+    late = finished(Trigger("cook_done", {**COOK_EVENT, "reason": "done"}))
+    assert early == late
+
+
 def test_a_stopped_cook_does_not_claim_the_food_is_ready() -> None:
-    variables = message_templates("cook_notifications")
-    data = {**COOK_EVENT, "reason": "stopped"}
-    message = render(
-        variables["message"],
-        trigger=Trigger("cook_done", data),
-        grill_name="WoodNinja", cook_mode="Air Crisp", probe="Probe 1", minutes=20,
-    )
-    assert "stopped" in message
-    assert "ready" not in message
+    title, message = finished(Trigger("cook_done", {**COOK_EVENT, "reason": "stopped"}))
+    assert "stopped" in title and "stopped" in message
+    assert "ready" not in message and "ready" not in title
+
+
+def test_the_lock_releases_on_the_next_cook_rather_than_a_timer() -> None:
+    """A plain delay would suppress the *next* cook's completion. Two cooks
+    thirty seconds apart were observed, the second only three minutes long."""
+    hold = next(a for a in load("cook_finished")["actions"] if "wait_for_trigger" in a)
+    waits = hold["wait_for_trigger"]
+    assert len(waits) == 1
+    assert waits[0]["to"] == "cooking"
+    assert waits[0]["entity_id"].name == "grill_state"
+    assert hold["continue_on_timeout"] is True
+    assert hold["timeout"]["minutes"] >= 5, "must outlast the gap between the two signals"
+
+
+def test_single_mode_is_what_collapses_the_pair() -> None:
+    doc = load("cook_finished")
+    assert doc["mode"] == "single"
+    assert doc["max_exceeded"] == "silent"
 
 
 def test_the_grill_names_itself_and_falls_back_when_it_cannot() -> None:

@@ -28,7 +28,7 @@ the integration will actually run on:
 ```bash
 mise install       # fetch the pinned Python, create .venv
 mise run install   # test deps + git hooks
-mise run test      # 208 tests, <1s, no HA needed
+mise run test      # 218 tests, <1s, no HA needed
 mise run check     # everything the pre-commit hooks check
 mise run compile   # syntax check without importing HA
 mise run deploy    # release + roll out to HA (see below)
@@ -246,10 +246,24 @@ phases.
 
 ### Blueprints
 
-`blueprints/automation/ninja_woodfire/` ships two automation blueprints:
-`cook_notifications.yaml` (the six bus events) and `grill_alerts.yaml` (lid
-left open, error code, gone quiet mid-cook). They are the answer to "your food
-is ready", which an integration cannot send on its own.
+`blueprints/automation/ninja_woodfire/` ships three automation blueprints:
+`cook_notifications.yaml` (during a cook), `cook_finished.yaml` (the end), and
+`grill_alerts.yaml` (lid left open, error code, gone quiet mid-cook). They are
+the answer to "your food is ready", which an integration cannot send on its
+own.
+
+**The end of a cook is its own blueprint, and has to be.** The grill announces
+it twice — `7:getfood` about ten seconds after `6:done`, then `cook_done` when
+the state goes idle, 2m16s later in one observed cook. Neither is reliable
+alone: a captured grill cook raised no `getfood`, and `cook_done` is always
+the late one. So both trigger and `mode: single` discards the second. That
+mode is exactly why it cannot share an automation with the rest — it would
+swallow those too.
+
+The run then **holds the lock until the grill starts cooking again**, capped
+at fifteen minutes. A plain `delay` was the first attempt and is wrong: it
+suppresses the *next* cook's completion, and two cooks thirty seconds apart
+were observed with the second only three minutes long.
 
 **HACS does not install them.** It copies `custom_components/<domain>/` and
 nothing else, so the README's `my.home-assistant.io/redirect/blueprint_import`

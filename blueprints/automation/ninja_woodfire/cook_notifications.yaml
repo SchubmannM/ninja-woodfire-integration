@@ -1,8 +1,14 @@
 blueprint:
   name: "Ninja Woodfire: cook notifications"
   description: >
-    Push notifications for a cook on a Ninja Woodfire grill — preheat done,
-    time to turn the food, food ready, meat probe at temperature.
+    Push notifications during a cook on a Ninja Woodfire grill — preheat done,
+    add the food, time to turn it, meat probe at temperature.
+
+
+    The *end* of a cook is a separate blueprint, "Ninja Woodfire: food is
+    ready". It has to be: the grill announces the end twice, seconds apart,
+    and suppressing the duplicate needs a concurrency mode that would swallow
+    everything here along with it.
 
 
     Pick your grill, tick what you want to hear about, and you are finished:
@@ -18,7 +24,7 @@ blueprint:
     here or the automation will fail at the last step.
 
 
-    For lid-left-open, error and went-offline warnings, see the companion
+    For lid-left-open, error and went-quiet warnings, see the companion
     "Ninja Woodfire: grill alerts" blueprint.
   domain: automation
   source_url: https://github.com/SchubmannM/ninja-woodfire-integration/blob/main/blueprints/automation/ninja_woodfire/cook_notifications.yaml
@@ -41,7 +47,6 @@ blueprint:
       default:
         - cook_started
         - preheat_complete
-        - cook_done
         - probe_target_reached
         - flipfood
       selector:
@@ -55,8 +60,6 @@ blueprint:
               value: preheat_complete
             - label: The cook is halfway through
               value: cook_halftime
-            - label: The cook has finished
-              value: cook_done
             - label: A meat probe has reached its target
               value: probe_target_reached
             - label: A meat probe has passed half its target temperature
@@ -65,8 +68,6 @@ blueprint:
               value: addfood
             - label: The grill asks you to turn the food
               value: flipfood
-            - label: The grill asks you to take the food out
-              value: getfood
     prompt_sensor:
       name: Prompt sensor
       description: >
@@ -111,9 +112,6 @@ triggers:
     event_type: ninja_woodfire_cook_halftime
     id: cook_halftime
   - trigger: event
-    event_type: ninja_woodfire_cook_done
-    id: cook_done
-  - trigger: event
     event_type: ninja_woodfire_probe_target_reached
     id: probe_target_reached
   - trigger: event
@@ -134,10 +132,6 @@ triggers:
     entity_id: !input prompt_sensor
     to: "flipfood"
     id: flipfood
-  - trigger: state
-    entity_id: !input prompt_sensor
-    to: "getfood"
-    id: getfood
 
 variables:
   grill: !input grill
@@ -177,9 +171,7 @@ actions:
       # always °C, and repeating it at a household that displays °F would be
       # worse than leaving the number out.
       title: >-
-        {%- if trigger.id == 'cook_done' -%}
-          {{ grill_name }} — {{ 'cook finished' if trigger.event.data.reason == 'done' else 'cook stopped' }}
-        {%- elif trigger.id == 'preheat_complete' -%}
+        {%- if trigger.id == 'preheat_complete' -%}
           {{ grill_name }} — preheated
         {%- elif trigger.id == 'probe_target_reached' -%}
           {{ grill_name }} — {{ probe | lower }} ready
@@ -191,8 +183,6 @@ actions:
           {{ grill_name }} — add the food
         {%- elif trigger.id == 'flipfood' -%}
           {{ grill_name }} — turn the food
-        {%- elif trigger.id == 'getfood' -%}
-          {{ grill_name }} — take the food out
         {%- else -%}
           {{ grill_name }} — cook started
         {%- endif -%}
@@ -204,12 +194,6 @@ actions:
           Preheating is done — put the food on.
         {%- elif trigger.id == 'cook_halftime' -%}
           Halfway through{{ ' the %s cook' | format(cook_mode) if cook_mode else '' }}.
-        {%- elif trigger.id == 'cook_done' -%}
-          {%- if trigger.event.data.reason == 'done' -%}
-            The cook has finished — your food is ready.
-          {%- else -%}
-            The cook was stopped before it finished.
-          {%- endif -%}
         {%- elif trigger.id == 'probe_target_reached' -%}
           {{ probe }} has reached its target temperature.
         {%- elif trigger.id == 'probe_halfway' -%}
@@ -218,8 +202,6 @@ actions:
           The grill is up to temperature and asking for the food.
         {%- elif trigger.id == 'flipfood' -%}
           Time to turn the food over.
-        {%- elif trigger.id == 'getfood' -%}
-          The grill is asking you to take the food out.
         {%- endif -%}
   # `choose: []` with only a default is the documented way to splice an
   # action-selector input into a sequence: the input's value is a *list* of
